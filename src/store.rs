@@ -102,19 +102,23 @@ pub async fn insert_rejected(
     Ok(Some(id))
 }
 
-/// Keeps the newest `keep` rejected deliveries. `skip locked` lets concurrent
-/// trims pass each other instead of deadlocking on the same rows.
+/// Keeps the newest `keep` rejected deliveries.
+///
+/// It finds the received_at of the `keep`-th newest row with one index probe
+/// and deletes everything older, which is usually a single row. Concurrent
+/// trims can delete the same row twice, which is harmless, and rows are visited
+/// in index order so they do not deadlock.
 pub async fn trim_rejected(pool: &PgPool, keep: i64) -> Result<u64, sqlx::Error> {
     let res = sqlx::query(
-        "delete from deliveries where id in (
-           select id from deliveries
-           where verification = 'rejected'
-           order by received_at desc, id
-           offset $1
-           for update skip locked
-         )",
+        "delete from deliveries
+         where verification = 'rejected'
+           and received_at < (
+             select received_at from deliveries
+             where verification = 'rejected'
+             order by received_at desc
+             offset $1 limit 1)",
     )
-    .bind(keep)
+    .bind((keep - 1).max(0))
     .execute(pool)
     .await?;
     Ok(res.rows_affected())

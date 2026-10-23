@@ -142,3 +142,33 @@ async fn the_rejected_cap_never_removes_verified_deliveries() {
     assert_eq!(count(&db.pool, "deliveries").await, 2);
     db.cleanup().await;
 }
+
+#[tokio::test]
+async fn the_rejected_cap_holds_under_concurrent_inserts() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let mut tasks = Vec::new();
+    for i in 0..40 {
+        let pool = db.pool.clone();
+        tasks.push(tokio::spawn(async move {
+            let body = format!("bad-{i}");
+            let d = NewDelivery {
+                source: "github",
+                event_id: None,
+                headers: &[],
+                body: body.as_bytes(),
+            };
+            store::insert_rejected(&pool, &d, "bad", 10).await.unwrap();
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap();
+    }
+    // Racing trims may leave a few extra rows, the next insert settles it.
+    store::insert_rejected(&db.pool, &delivery(None, b"last"), "bad", 10)
+        .await
+        .unwrap();
+    assert_eq!(count(&db.pool, "deliveries").await, 10);
+    db.cleanup().await;
+}

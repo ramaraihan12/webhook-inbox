@@ -35,7 +35,7 @@ if [ "$mode" = duplicate ]; then
 fi
 
 docker run --rm --network "$net" ghcr.io/hatoo/oha:1.16.0 \
-  --no-tui -z "$duration" -c "$conc" -m POST \
+  --no-tui -z "$duration" -c "$conc" -m POST ${OHA_ARGS:-} \
   -H "content-type: application/json" \
   -H "x-hub-signature-256: $sig" \
   ${extra[@]+"${extra[@]}"} \
