@@ -5,6 +5,7 @@ pub mod backoff;
 pub mod config;
 pub mod event_id;
 pub mod ops;
+pub mod queue;
 pub mod receive;
 pub mod store;
 pub mod telemetry;

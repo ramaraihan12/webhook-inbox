@@ -1,0 +1,170 @@
+//! The job queue: claiming, finishing and replaying jobs.
+//!
+//! The queue is the `jobs` table. Several instances can run against it because
+//! `claim_jobs` takes rows with `for update skip locked`: a row another worker
+//! has locked is skipped, not waited for, so two workers never get the same job.
+
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use crate::store::Headers;
+
+/// A job a worker now holds, with everything needed to make the HTTP call.
+#[derive(Debug)]
+pub struct Claimed {
+    pub job_id: Uuid,
+    pub delivery_id: Uuid,
+    pub source: String,
+    pub target: String,
+    pub url: String,
+    /// 1 for the first try. Includes tries lost to a crashed worker.
+    pub attempt: i32,
+    pub headers: Headers,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Verdict {
+    Done,
+    /// Try again after this long.
+    Retry(Duration),
+    Dead,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttemptResult {
+    pub verdict: Verdict,
+    pub http_status: Option<i32>,
+    pub error: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub duration_ms: i32,
+}
+
+/// Takes up to `limit` due jobs and locks them for `lease`.
+///
+/// Due means pending with `next_attempt_at` in the past, or in flight with an
+/// expired lease (the worker holding it died). `attempts` goes up by one here,
+/// so the number a worker sees is the number of this try.
+pub async fn claim_jobs(
+    pool: &PgPool,
+    limit: i64,
+    lease: Duration,
+) -> Result<Vec<Claimed>, sqlx::Error> {
+    let rows: Vec<(
+        Uuid,
+        Uuid,
+        String,
+        String,
+        String,
+        i32,
+        serde_json::Value,
+        Vec<u8>,
+    )> = sqlx::query_as(
+        "with picked as (
+               select id from jobs
+               where (status = 'pending' and next_attempt_at <= now())
+                  or (status = 'in_flight' and locked_until < now())
+               order by next_attempt_at
+               limit $1
+               for update skip locked
+             ), claimed as (
+               update jobs j
+               set status = 'in_flight',
+                   attempts = j.attempts + 1,
+                   locked_until = now() + make_interval(secs => $2)
+               from picked
+               where j.id = picked.id
+               returning j.id, j.delivery_id, j.target, j.url, j.attempts
+             )
+             select c.id, c.delivery_id, d.source, c.target, c.url, c.attempts, d.headers, d.body
+             from claimed c
+             join deliveries d on d.id = c.delivery_id",
+    )
+    .bind(limit)
+    .bind(lease.as_secs_f64())
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(job_id, delivery_id, source, target, url, attempt, headers, body)| Claimed {
+                job_id,
+                delivery_id,
+                source,
+                target,
+                url,
+                attempt,
+                headers: serde_json::from_value(headers).unwrap_or_default(),
+                body,
+            },
+        )
+        .collect())
+}
+
+/// Records the result of a try and moves the job on, in one transaction.
+///
+/// The update only applies while this worker still owns the job (it is in
+/// flight and `attempts` still equals this try). If the lease ran out and
+/// someone else took the job over, nothing is written and `false` comes back,
+/// so one try is never recorded twice.
+pub async fn finish_job(
+    pool: &PgPool,
+    job: &Claimed,
+    result: &AttemptResult,
+) -> Result<bool, sqlx::Error> {
+    let (status, delay, outcome) = match &result.verdict {
+        Verdict::Done => ("done", None, "ok"),
+        Verdict::Retry(d) => ("pending", Some(d.as_secs_f64()), "retry"),
+        Verdict::Dead => ("dead", None, "dead"),
+    };
+
+    let mut tx = pool.begin().await?;
+    let updated = sqlx::query(
+        "update jobs
+         set status = $3,
+             next_attempt_at = case when $4::float8 is null then next_attempt_at
+                                    else now() + make_interval(secs => $4::float8) end,
+             locked_until = null,
+             last_status = $5,
+             last_error = $6,
+             finished_at = case when $3 in ('done', 'dead') then now() end
+         where id = $1 and status = 'in_flight' and attempts = $2",
+    )
+    .bind(job.job_id)
+    .bind(job.attempt)
+    .bind(status)
+    .bind(delay)
+    .bind(result.http_status)
+    .bind(&result.error)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+
+    if updated == 0 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    sqlx::query(
+        "insert into attempts
+           (job_id, delivery_id, attempt, started_at, duration_ms, http_status, error, outcome, retry_in_ms)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(job.job_id)
+    .bind(job.delivery_id)
+    .bind(job.attempt)
+    .bind(result.started_at)
+    .bind(result.duration_ms)
+    .bind(result.http_status)
+    .bind(&result.error)
+    .bind(outcome)
+    .bind(delay.map(|s| (s * 1000.0) as i64))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
