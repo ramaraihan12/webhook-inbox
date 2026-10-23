@@ -418,11 +418,9 @@ fn resolve_target(
     if !valid_name(&raw.name) {
         return invalid("name: use lowercase letters, digits, - and _");
     }
-    if !(raw.url.starts_with("http://") || raw.url.starts_with("https://")) {
-        return invalid(format!(
-            "url: {:?} must start with http:// or https://",
-            raw.url
-        ));
+    let url = expand_env(&raw.url, env).map_err(|e| ConfigError::Invalid(format!("url: {e}")))?;
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return invalid(format!("url: {url:?} must start with http:// or https://"));
     }
     let timeout = duration("timeout", &raw.timeout, Duration::from_secs(10))?;
 
@@ -443,7 +441,7 @@ fn resolve_target(
 
     Ok(Target {
         name: raw.name,
-        url: raw.url,
+        url,
         timeout,
         headers,
     })
@@ -680,6 +678,21 @@ mod tests {
     fn header_templates_fail_on_unset_variables() {
         let t = MINIMAL.to_string() + "\nheaders = { x-token = \"${NOT_SET}\" }\n";
         assert!(err(&t).contains("NOT_SET"));
+    }
+
+    #[test]
+    fn target_urls_can_use_env_variables() {
+        let t = MINIMAL.replace("http://localhost:3000/hooks/github", "${APP_TOKEN}/hooks");
+        // The expanded value is not a url, so this also proves the check runs after expansion.
+        assert!(err(&t).contains("s3cret/hooks"));
+        let ok = MINIMAL.replace(
+            "http://localhost:3000/hooks/github",
+            "http://${APP_TOKEN}.local/in",
+        );
+        let c = parse(&ok).unwrap();
+        assert_eq!(c.sources[0].targets[0].url, "http://s3cret.local/in");
+        let unset = MINIMAL.replace("http://localhost:3000/hooks/github", "${NOT_SET}/in");
+        assert!(err(&unset).contains("NOT_SET"));
     }
 
     #[test]
