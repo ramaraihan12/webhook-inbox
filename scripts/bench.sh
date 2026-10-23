@@ -7,7 +7,8 @@
 #   scripts/bench.sh duplicate   # same event id every time, answered as a duplicate
 #   scripts/bench.sh rejected    # wrong signature, answered 401
 #
-# DURATION (default 30s) and CONC (default 50) change the run.
+# DURATION (default 30s) and CONC (default 50) change the run. OHA_ARGS adds
+# flags to oha, for example OHA_ARGS="-q 50" to cap it at 50 requests a second.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
 
