@@ -10,3 +10,4 @@ pub mod receive;
 pub mod store;
 pub mod telemetry;
 pub mod verify;
+pub mod worker;
