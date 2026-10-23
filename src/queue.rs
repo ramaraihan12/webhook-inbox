@@ -168,3 +168,28 @@ pub async fn finish_job(
     tx.commit().await?;
     Ok(true)
 }
+
+/// Queues a fresh job for every target of a verified delivery. The old jobs
+/// and their attempts stay, so the timeline shows the replay as new tries.
+/// Returns how many jobs were created, 0 if the delivery is unknown or was
+/// rejected.
+pub async fn replay_delivery(
+    pool: &PgPool,
+    delivery_id: Uuid,
+    targets: &[(String, String)],
+) -> Result<u64, sqlx::Error> {
+    let names: Vec<&str> = targets.iter().map(|t| t.0.as_str()).collect();
+    let urls: Vec<&str> = targets.iter().map(|t| t.1.as_str()).collect();
+    let res = sqlx::query(
+        "insert into jobs (delivery_id, target, url, replay)
+         select d.id, t.name, t.url, true
+         from deliveries d, unnest($2::text[], $3::text[]) as t(name, url)
+         where d.id = $1 and d.verification = 'verified'",
+    )
+    .bind(delivery_id)
+    .bind(&names)
+    .bind(&urls)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
