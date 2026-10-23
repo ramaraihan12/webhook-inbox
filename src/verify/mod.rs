@@ -40,3 +40,24 @@ pub(crate) fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a s
         .to_str()
         .map_err(|_| VerifyError::Malformed)
 }
+
+/// One configured way of checking a source.
+#[derive(Debug, Clone)]
+pub enum Verifier {
+    Github(GithubVerifier),
+    Hmac(HmacVerifier),
+    Midtrans(MidtransVerifier),
+    Xendit(XenditVerifier),
+}
+
+impl Verifier {
+    /// `now` is unix seconds. Only the timestamped HMAC scheme looks at it.
+    pub fn verify(&self, headers: &HeaderMap, body: &[u8], now: i64) -> Result<(), VerifyError> {
+        match self {
+            Verifier::Github(v) => v.verify(headers, body),
+            Verifier::Hmac(v) => v.verify(headers, body, now),
+            Verifier::Midtrans(v) => v.verify(body),
+            Verifier::Xendit(v) => v.verify(headers),
+        }
+    }
+}
