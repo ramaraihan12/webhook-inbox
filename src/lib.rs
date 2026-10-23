@@ -4,6 +4,7 @@ pub mod app;
 pub mod backoff;
 pub mod config;
 pub mod event_id;
+pub mod inspect;
 pub mod ops;
 pub mod queue;
 pub mod receive;
