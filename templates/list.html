@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Deliveries - webhook-inbox{% endblock %}
+{% block content %}
+<h1>Deliveries</h1>
+
+<form class="filters" hx-get="/ui/rows" hx-target="#rows" hx-trigger="change, every 5s" hx-push-url="false">
+  <label>Source
+    <select name="source">
+      <option value="">all</option>
+      {% for s in sources %}
+      <option value="{{ s }}" {% if *s == source %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Status
+    <select name="status">
+      <option value="">all</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {% if *s == status %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <input type="hidden" name="page" value="{{ page }}">
+</form>
+
+<div id="rows">
+  {% include "rows.html" %}
+</div>
+{% endblock %}

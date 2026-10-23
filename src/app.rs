@@ -14,7 +14,8 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::config::Config;
-use crate::{ops, receive};
+use crate::verify::Secret;
+use crate::{ops, receive, ui};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,6 +25,8 @@ pub struct AppState {
     /// next poll.
     pub wake: Arc<Notify>,
     pub metrics: PrometheusHandle,
+    /// Token for the UI. With none set the UI answers 503.
+    pub admin_token: Option<Arc<Secret>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -38,6 +41,7 @@ pub fn router(state: AppState) -> Router {
 
     Router::new()
         .merge(receive_routes)
+        .merge(ui::routes(state.clone()))
         .route("/healthz", get(ops::healthz))
         .route("/metrics", get(ops::metrics))
         .layer(TimeoutLayer::with_status_code(

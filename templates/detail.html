@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Delivery {{ d.short }} - webhook-inbox{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/ui">Deliveries</a> / <span class="mono">{{ d.id }}</span></p>
+<h1>{{ d.source }} <span class="badge {{ d.status }}">{{ d.status }}</span></h1>
+
+<dl class="facts">
+  <dt>Received</dt><dd>{{ d.received }} UTC</dd>
+  <dt>Verification</dt><dd>{{ d.verification }}{% if !d.reject_reason.is_empty() %}: {{ d.reject_reason }}{% endif %}</dd>
+  {% if !d.event_id.is_empty() %}<dt>Event id</dt><dd class="mono">{{ d.event_id }}</dd>{% endif %}
+  <dt>Body</dt><dd>{{ d.body_size }}</dd>
+</dl>
+
+{% if a.can_replay %}
+<div id="activity" hx-get="/ui/deliveries/{{ a.id }}/activity" hx-trigger="every 3s" hx-swap="innerHTML">
+  {% include "activity.html" %}
+</div>
+{% else %}
+<div id="activity">
+  {% include "activity.html" %}
+</div>
+{% endif %}
+
+<h2>Body</h2>
+<pre class="body">{{ d.body }}</pre>
+
+<h2>Headers</h2>
+<table class="grid headers">
+  <tbody>
+    {% for h in d.headers %}
+    <tr><td class="mono key">{{ h.0 }}</td><td class="mono">{{ h.1 }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Credentials (authorization, cookie, x-callback-token) are never stored.</p>
+{% endblock %}

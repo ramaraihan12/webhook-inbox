@@ -1,0 +1,34 @@
+<div class="activity-head">
+  <h2>Targets</h2>
+  {% if a.can_replay %}
+  <button class="btn" hx-post="/ui/deliveries/{{ a.id }}/replay" hx-target="#activity" hx-swap="innerHTML">Replay to all targets</button>
+  {% endif %}
+</div>
+{% if a.jobs.is_empty() %}
+<p class="empty">Nothing to forward. This delivery was rejected, so it was only kept for debugging.</p>
+{% else %}
+<table class="grid">
+  <thead><tr><th>Target</th><th>Url</th><th>Status</th><th class="num">Tries</th><th>Last result</th></tr></thead>
+  <tbody>
+    {% for j in a.jobs %}
+    <tr>
+      <td>{{ j.target }}{% if j.replay %} <span class="tag">replay</span>{% endif %}</td>
+      <td class="mono">{{ j.url }}</td>
+      <td><span class="badge {{ j.status }}">{{ j.status }}</span></td>
+      <td class="num">{{ j.attempts }}</td>
+      <td>{{ j.last }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>Timeline</h2>
+<ol class="timeline">
+  {% for e in a.timeline %}
+  <li class="{{ e.class }}">
+    <span class="when mono">{{ e.time }}</span>
+    <span class="what"><strong>{{ e.title }}</strong>{% if !e.detail.is_empty() %} <span class="muted">{{ e.detail }}</span>{% endif %}</span>
+  </li>
+  {% endfor %}
+</ol>

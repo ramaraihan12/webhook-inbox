@@ -93,12 +93,17 @@ pub struct TestApp {
 impl TestApp {
     /// Starts the HTTP side only.
     pub async fn start(pool: &PgPool, toml: &str) -> TestApp {
+        TestApp::start_with_token(pool, toml, Some("test-admin-token")).await
+    }
+
+    pub async fn start_with_token(pool: &PgPool, toml: &str, token: Option<&str>) -> TestApp {
         let config = Arc::new(Config::from_toml(toml, &test_env).unwrap());
         let state = AppState {
             pool: pool.clone(),
             config,
             wake: Arc::new(Notify::new()),
             metrics: webhook_inbox::telemetry::install_metrics(),
+            admin_token: token.map(|t| Arc::new(t.into())),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());

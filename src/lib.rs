@@ -10,5 +10,6 @@ pub mod queue;
 pub mod receive;
 pub mod store;
 pub mod telemetry;
+pub mod ui;
 pub mod verify;
 pub mod worker;

@@ -1,0 +1,26 @@
+{% if rows.is_empty() %}
+<p class="empty">No deliveries match.</p>
+{% else %}
+<table class="grid">
+  <thead>
+    <tr><th>Received (UTC)</th><th>Source</th><th>Status</th><th>Event id</th><th class="num">Tries</th><th>Delivery</th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="nowrap">{{ r.received }}</td>
+      <td>{{ r.source }}</td>
+      <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+      <td class="mono">{{ r.event_id }}{% if !r.reject_reason.is_empty() %}<span class="muted">{{ r.reject_reason }}</span>{% endif %}</td>
+      <td class="num">{{ r.attempts }}</td>
+      <td class="mono"><a href="/ui/deliveries/{{ r.id }}">{{ r.short }}</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="pager">
+  {% if let Some(href) = prev_href %}<a href="{{ href }}">Newer</a>{% endif %}
+  <span class="muted">page {{ page_label }}</span>
+  {% if let Some(href) = next_href %}<a href="{{ href }}">Older</a>{% endif %}
+</p>
+{% endif %}

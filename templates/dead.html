@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Dead letters - webhook-inbox{% endblock %}
+{% block content %}
+<h1>Dead letters</h1>
+<p class="muted">Jobs that used up every try. Replaying one queues a fresh job for that target only, starting again at try 1.</p>
+
+{% if rows.is_empty() %}
+<p class="empty">No dead jobs. Everything that was accepted has been delivered or is still retrying.</p>
+{% else %}
+<table class="grid">
+  <thead>
+    <tr><th>Gave up (UTC)</th><th>Source</th><th>Target</th><th class="num">Tries</th><th>Last error</th><th>Delivery</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="nowrap">{{ r.when }}</td>
+      <td>{{ r.source }}</td>
+      <td>{{ r.target }}<div class="mono muted">{{ r.url }}</div></td>
+      <td class="num">{{ r.attempts }}</td>
+      <td>{{ r.error }}</td>
+      <td class="mono"><a href="/ui/deliveries/{{ r.delivery_id }}">{{ r.short }}</a></td>
+      <td><button class="btn" hx-post="/ui/jobs/{{ r.job_id }}/replay" hx-target="closest tr" hx-swap="outerHTML">Replay</button></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -71,7 +71,7 @@ fn database_url(url: Option<String>) -> Result<String> {
     url.context("DATABASE_URL is not set")
 }
 
-fn check_config(path: &PathBuf) -> Result<()> {
+fn check_config(path: &Path) -> Result<()> {
     let config = Config::load(path).with_context(|| format!("loading {}", path.display()))?;
     println!("listen {}", config.server.listen);
     for source in &config.sources {
@@ -96,7 +96,7 @@ async fn prune(url: Option<String>, older_than: &str, dry_run: bool) -> Result<(
     Ok(())
 }
 
-async fn serve(config_path: &PathBuf, url: Option<String>) -> Result<()> {
+async fn serve(config_path: &Path, url: Option<String>) -> Result<()> {
     let config = Arc::new(
         Config::load(config_path).with_context(|| format!("loading {}", config_path.display()))?,
     );
@@ -113,6 +113,10 @@ async fn serve(config_path: &PathBuf, url: Option<String>) -> Result<()> {
         config: config.clone(),
         wake: wake.clone(),
         metrics: telemetry::install_metrics(),
+        admin_token: std::env::var("ADMIN_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty())
+            .map(|t| Arc::new(t.into())),
     };
 
     let shutdown = CancellationToken::new();

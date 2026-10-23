@@ -383,10 +383,10 @@ fn resolve_source(
             }
         }),
     };
-    if let Some(EventIdSource::JsonPointers(ps)) = &event_id {
-        if let Some(bad) = ps.iter().find(|p| !p.starts_with('/')) {
-            return invalid(format!("event_id: json pointer {bad:?} must start with /"));
-        }
+    if let Some(EventIdSource::JsonPointers(ps)) = &event_id
+        && let Some(bad) = ps.iter().find(|p| !p.starts_with('/'))
+    {
+        return invalid(format!("event_id: json pointer {bad:?} must start with /"));
     }
 
     if raw.targets.is_empty() {

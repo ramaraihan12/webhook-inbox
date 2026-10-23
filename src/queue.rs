@@ -26,6 +26,17 @@ pub struct Claimed {
     pub body: Vec<u8>,
 }
 
+type ClaimRow = (
+    Uuid,
+    Uuid,
+    String,
+    String,
+    String,
+    i32,
+    serde_json::Value,
+    Vec<u8>,
+);
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Verdict {
     Done,
@@ -53,16 +64,7 @@ pub async fn claim_jobs(
     limit: i64,
     lease: Duration,
 ) -> Result<Vec<Claimed>, sqlx::Error> {
-    let rows: Vec<(
-        Uuid,
-        Uuid,
-        String,
-        String,
-        String,
-        i32,
-        serde_json::Value,
-        Vec<u8>,
-    )> = sqlx::query_as(
+    let rows: Vec<ClaimRow> = sqlx::query_as(
         "with picked as (
                select id from jobs
                where (status = 'pending' and next_attempt_at <= now())
