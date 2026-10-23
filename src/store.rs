@@ -119,3 +119,16 @@ pub async fn trim_rejected(pool: &PgPool, keep: i64) -> Result<u64, sqlx::Error>
     .await?;
     Ok(res.rows_affected())
 }
+
+/// Jobs per status. All four statuses are always present, so a gauge drops
+/// back to 0 instead of keeping its last value.
+pub async fn job_counts(pool: &PgPool) -> Result<Vec<(&'static str, i64)>, sqlx::Error> {
+    let rows: Vec<(String, i64)> =
+        sqlx::query_as("select status, count(*) from jobs group by status")
+            .fetch_all(pool)
+            .await?;
+    Ok(["pending", "in_flight", "done", "dead"]
+        .into_iter()
+        .map(|s| (s, rows.iter().find(|r| r.0 == s).map_or(0, |r| r.1)))
+        .collect())
+}
