@@ -40,10 +40,18 @@ services:
         condition: service_healthy
     stop_grace_period: 40s
 
+  # Same image as the inbox, started with the other binary.
   sink:
-    build: .
     image: webhook-inbox:local
+    pull_policy: never
+    depends_on:
+      - inbox
     entrypoint: ["echo-sink"]
+    healthcheck:
+      test: ["CMD", "webhook-inbox", "healthcheck", "--url", "http://127.0.0.1:8021/count"]
+      interval: 10s
+      timeout: 4s
+      retries: 3
     environment:
       PORT: "8021"
     ports:
