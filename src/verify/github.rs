@@ -14,18 +14,23 @@ pub struct GithubVerifier {
 
 impl GithubVerifier {
     pub fn new(secret: impl Into<Vec<u8>>) -> Self {
-        Self { secret: secret.into() }
+        Self {
+            secret: secret.into(),
+        }
     }
 
     pub fn verify(&self, headers: &HeaderMap, body: &[u8]) -> Result<(), VerifyError> {
         let value = header_str(headers, HEADER)?;
-        let hex_sig = value.strip_prefix("sha256=").ok_or(VerifyError::Malformed)?;
+        let hex_sig = value
+            .strip_prefix("sha256=")
+            .ok_or(VerifyError::Malformed)?;
         let given = hex::decode(hex_sig).map_err(|_| VerifyError::Malformed)?;
         if given.is_empty() {
             return Err(VerifyError::Malformed);
         }
 
-        let mut mac = Hmac::<Sha256>::new_from_slice(&self.secret).expect("hmac takes any key length");
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(&self.secret).expect("hmac takes any key length");
         mac.update(body);
         let expected = mac.finalize().into_bytes();
 
@@ -61,7 +66,10 @@ mod tests {
     #[test]
     fn rejects_a_tampered_body() {
         let v = GithubVerifier::new(SECRET);
-        assert_eq!(v.verify(&headers(SIG), b"Hello, World?"), Err(VerifyError::Mismatch));
+        assert_eq!(
+            v.verify(&headers(SIG), b"Hello, World?"),
+            Err(VerifyError::Mismatch)
+        );
     }
 
     #[test]
@@ -77,9 +85,18 @@ mod tests {
             v.verify(&HeaderMap::new(), BODY),
             Err(VerifyError::MissingHeader(HEADER.into()))
         );
-        assert_eq!(v.verify(&headers("757107ea"), BODY), Err(VerifyError::Malformed));
-        assert_eq!(v.verify(&headers("sha256=zz"), BODY), Err(VerifyError::Malformed));
-        assert_eq!(v.verify(&headers("sha256="), BODY), Err(VerifyError::Malformed));
+        assert_eq!(
+            v.verify(&headers("757107ea"), BODY),
+            Err(VerifyError::Malformed)
+        );
+        assert_eq!(
+            v.verify(&headers("sha256=zz"), BODY),
+            Err(VerifyError::Malformed)
+        );
+        assert_eq!(
+            v.verify(&headers("sha256="), BODY),
+            Err(VerifyError::Malformed)
+        );
     }
 
     #[test]

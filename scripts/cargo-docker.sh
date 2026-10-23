@@ -8,8 +8,14 @@ set -eu
 # Git Bash on Windows would rewrite the container paths below.
 export MSYS_NO_PATHCONV=1
 
-IMAGE="${RUST_IMAGE:-rust:1.99-bookworm}"
+BASE="${RUST_IMAGE:-rust:1.99-bookworm}"
+DEV="webhook-inbox-dev"
 TEST_DB="${TEST_DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:5433/webhook_inbox_test}"
+
+# The base image has no rustfmt or clippy, so add them once.
+if ! docker image inspect "$DEV" >/dev/null 2>&1; then
+  printf 'FROM %s\nRUN rustup component add rustfmt clippy\n' "$BASE" | docker build -t "$DEV" -
+fi
 
 exec docker run --rm \
   -v "$PWD":/work -w /work \
@@ -19,4 +25,4 @@ exec docker run --rm \
   -e CARGO_BUILD_JOBS=6 \
   -e TEST_DATABASE_URL="$TEST_DB" \
   --add-host host.docker.internal:host-gateway \
-  "$IMAGE" cargo "$@"
+  "$DEV" cargo "$@"
