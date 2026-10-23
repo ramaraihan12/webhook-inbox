@@ -54,6 +54,7 @@ services:
       retries: 3
     environment:
       PORT: "8021"
+      SINK_QUIET: ${SINK_QUIET:-0}
     ports:
       - "127.0.0.1:8021:8021"
 
