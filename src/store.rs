@@ -132,3 +132,35 @@ pub async fn job_counts(pool: &PgPool) -> Result<Vec<(&'static str, i64)>, sqlx:
         .map(|s| (s, rows.iter().find(|r| r.0 == s).map_or(0, |r| r.1)))
         .collect())
 }
+
+/// Deletes deliveries older than `older_than`, with their jobs and attempts.
+/// A delivery that still has a job waiting or in flight is left alone, so
+/// pruning never throws away work that has not been done yet. With `dry_run`
+/// it only counts.
+pub async fn prune(pool: &PgPool, older_than: Duration, dry_run: bool) -> Result<u64, sqlx::Error> {
+    let secs = older_than.as_secs_f64();
+    if dry_run {
+        let n: i64 = sqlx::query_scalar(
+            "select count(*) from deliveries d
+             where d.received_at < now() - make_interval(secs => $1)
+               and not exists (
+                 select 1 from jobs j
+                 where j.delivery_id = d.id and j.status in ('pending', 'in_flight'))",
+        )
+        .bind(secs)
+        .fetch_one(pool)
+        .await?;
+        return Ok(n as u64);
+    }
+    let res = sqlx::query(
+        "delete from deliveries d
+         where d.received_at < now() - make_interval(secs => $1)
+           and not exists (
+             select 1 from jobs j
+             where j.delivery_id = d.id and j.status in ('pending', 'in_flight'))",
+    )
+    .bind(secs)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
