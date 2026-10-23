@@ -51,6 +51,12 @@ enum Command {
     },
     /// Load the config, check it and print what it contains.
     CheckConfig,
+    /// Ask a running instance for /healthz and exit 1 if it does not answer
+    /// 200. Used as the container health check, since the image has no curl.
+    Healthcheck {
+        #[arg(long, default_value = "http://127.0.0.1:8020/healthz")]
+        url: String,
+    },
 }
 
 #[tokio::main]
@@ -64,11 +70,25 @@ async fn main() -> Result<()> {
             dry_run,
         } => prune(cli.database_url, &older_than, dry_run).await,
         Command::CheckConfig => check_config(&cli.config),
+        Command::Healthcheck { url } => healthcheck(&url).await,
     }
 }
 
 fn database_url(url: Option<String>) -> Result<String> {
     url.context("DATABASE_URL is not set")
+}
+
+async fn healthcheck(url: &str) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?;
+    let res = client.get(url).send().await.context("no answer")?;
+    anyhow::ensure!(
+        res.status().is_success(),
+        "health check returned {}",
+        res.status()
+    );
+    Ok(())
 }
 
 fn check_config(path: &Path) -> Result<()> {
