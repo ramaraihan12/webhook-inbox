@@ -123,3 +123,97 @@ pub fn github_signature(secret: &str, body: &[u8]) -> String {
 pub async fn count(pool: &PgPool, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
+
+use std::time::{Duration, Instant};
+
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use webhook_inbox::worker::Worker;
+
+/// Config for one source whose single target is `target_url`, with retry
+/// timings short enough for tests.
+pub fn fast_config(target_url: &str, max_attempts: u32) -> String {
+    format!(
+        r#"
+        [worker]
+        count = 2
+        batch = 4
+        poll_interval = "20ms"
+        lease = "5s"
+
+        [retry]
+        max_attempts = {max_attempts}
+        base = "30ms"
+        cap = "100ms"
+        max_retry_after = "5s"
+
+        [[source]]
+        name = "github"
+        verifier = "github"
+        secret_env = "GITHUB_SECRET"
+        event_id = {{ header = "x-github-delivery" }}
+        [[source.target]]
+        name = "app"
+        url = "{target_url}"
+        timeout = "400ms"
+        headers = {{ x-app-key = "k-123" }}
+        "#
+    )
+}
+
+pub struct RunningWorkers {
+    shutdown: CancellationToken,
+    handle: JoinHandle<()>,
+}
+
+impl RunningWorkers {
+    /// Cancels the claim loops and waits until in-flight deliveries finish.
+    pub async fn stop(self) {
+        self.shutdown.cancel();
+        self.handle.await.unwrap();
+    }
+}
+
+impl TestApp {
+    pub fn spawn_workers(&self) -> RunningWorkers {
+        let worker = Worker::new(
+            self.state.pool.clone(),
+            self.state.config.clone(),
+            self.state.wake.clone(),
+        );
+        let shutdown = CancellationToken::new();
+        let handle = tokio::spawn({
+            let shutdown = shutdown.clone();
+            async move { worker.run(shutdown).await }
+        });
+        RunningWorkers { shutdown, handle }
+    }
+
+    pub async fn post_github(&self, body: &[u8], delivery_id: &str) -> reqwest::Response {
+        self.client
+            .post(format!("{}/in/github", self.base))
+            .header("x-hub-signature-256", github_signature("gh-secret", body))
+            .header("x-github-delivery", delivery_id)
+            .header("content-type", "application/json")
+            .body(body.to_vec())
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+/// Polls until `sql` returns at least `want`, or fails the test after `within`.
+pub async fn wait_for_count(pool: &PgPool, sql: &'static str, want: i64, within: Duration) {
+    let deadline = Instant::now() + within;
+    loop {
+        let n = count(pool, sql).await;
+        if n >= want {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {want} from `{sql}`, last saw {n}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
