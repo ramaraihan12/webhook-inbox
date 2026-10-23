@@ -4,11 +4,13 @@
 //! constant time for slices of the same length and rejects different lengths.
 
 mod github;
+mod hmac_generic;
 
 use http::HeaderMap;
 use subtle::ConstantTimeEq;
 
 pub use github::GithubVerifier;
+pub use hmac_generic::{Encoding, HmacVerifier};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerifyError {
