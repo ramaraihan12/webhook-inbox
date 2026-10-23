@@ -1,0 +1,53 @@
+# Postgres, the inbox and a tiny echo sink to forward to. The ports are
+# published on 127.0.0.1 only, so nothing is reachable from your network.
+# The secrets below are demo values. Put real ones in .env.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: webhook_inbox
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d webhook_inbox"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  inbox:
+    build: .
+    image: webhook-inbox:local
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/webhook_inbox
+      INBOX_CONFIG: /etc/webhook-inbox/inbox.toml
+      SINK_URL: http://sink:8021
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-demo-admin-token}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-demo-github-secret}
+      MIDTRANS_SERVER_KEY: ${MIDTRANS_SERVER_KEY:-SB-Mid-server-demo}
+      XENDIT_CALLBACK_TOKEN: ${XENDIT_CALLBACK_TOKEN:-demo-xendit-token}
+      PARTNER_SECRET: ${PARTNER_SECRET:-demo-partner-secret}
+    volumes:
+      - ./inbox.toml:/etc/webhook-inbox/inbox.toml:ro
+    ports:
+      - "127.0.0.1:8020:8020"
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 40s
+
+  sink:
+    build: .
+    image: webhook-inbox:local
+    entrypoint: ["echo-sink"]
+    environment:
+      PORT: "8021"
+    ports:
+      - "127.0.0.1:8021:8021"
+
+volumes:
+  pgdata:

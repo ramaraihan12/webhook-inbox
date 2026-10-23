@@ -1,0 +1,94 @@
+# Demo config used by docker-compose.yml. The sink is the echo-sink binary in
+# this repo. Secrets are read from the environment, never from this file.
+# Everything here (company names, order ids) is made up.
+
+[server]
+listen = "0.0.0.0:8020"
+max_body_bytes = 1048576
+request_timeout = "10s"
+
+[worker]
+count = 4
+batch = 8
+poll_interval = "500ms"
+lease = "2m"
+
+# Short on purpose so the demo shows a dead job in about a minute.
+# The defaults are 8 tries, base 2s, cap 1h.
+[retry]
+max_attempts = 5
+base = "1s"
+cap = "20s"
+max_retry_after = "1m"
+
+[rejected]
+keep = 500
+
+# GitHub: X-Hub-Signature-256, deduplicated on X-GitHub-Delivery.
+[[source]]
+name = "github"
+verifier = "github"
+secret_env = "GITHUB_WEBHOOK_SECRET"
+event_id = { header = "x-github-delivery" }
+
+[[source.target]]
+name = "ci"
+url = "${SINK_URL}/ok"
+timeout = "5s"
+headers = { x-forwarded-by = "webhook-inbox" }
+
+# Midtrans: the signature is inside the body. The same transaction is sent
+# again with a new status, so the event id is transaction id plus status.
+[[source]]
+name = "midtrans"
+verifier = "midtrans"
+secret_env = "MIDTRANS_SERVER_KEY"
+event_id = { json_pointers = ["/transaction_id", "/transaction_status"] }
+
+# This one fails twice before it works, to show retries.
+[[source.target]]
+name = "billing"
+url = "${SINK_URL}/flaky"
+timeout = "5s"
+
+[[source.target]]
+name = "audit"
+url = "${SINK_URL}/ok"
+timeout = "5s"
+
+# Xendit: a static token in x-callback-token.
+[[source]]
+name = "xendit"
+verifier = "xendit"
+secret_env = "XENDIT_CALLBACK_TOKEN"
+event_id = { json_pointer = "/id" }
+
+[[source.target]]
+name = "payouts"
+url = "${SINK_URL}/ok"
+
+# A partner that signs "<timestamp>.<body>" Stripe-style and allows 5 minutes of clock skew.
+# Its target is always down, which is how you get something into the dead-letter view.
+[[source]]
+name = "partner"
+verifier = "hmac"
+secret_env = "PARTNER_SECRET"
+header = "x-partner-signature"
+tolerance = "5m"
+event_id = { header = "x-partner-event" }
+
+[[source.target]]
+name = "erp"
+url = "${SINK_URL}/down"
+timeout = "3s"
+
+# Used for the load numbers in the README. No event id, so every request is stored.
+[[source]]
+name = "bench"
+verifier = "github"
+secret_env = "GITHUB_WEBHOOK_SECRET"
+
+[[source.target]]
+name = "sink"
+url = "${SINK_URL}/ok"
+timeout = "5s"
