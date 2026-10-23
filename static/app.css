@@ -128,7 +128,7 @@ table.grid { width: 100%; border-collapse: collapse; background: var(--panel); b
 
 ol.timeline { list-style: none; margin: 0; padding: 0 0 0 4px; border-left: 2px solid var(--line); }
 .timeline li { position: relative; display: flex; gap: 16px; padding: 6px 0 6px 18px; }
-.timeline li::before { content: ""; position: absolute; left: -6px; top: 13px; width: 10px; height: 10px; border-radius: 50%; background: var(--gray-bg); border: 2px solid var(--line); }
+.timeline li::before { content: ""; position: absolute; left: -12px; top: 13px; width: 10px; height: 10px; border-radius: 50%; background: var(--gray-bg); border: 2px solid var(--line); }
 .timeline li.ok::before { background: var(--ok); border-color: var(--ok); }
 .timeline li.warn::before { background: var(--warn); border-color: var(--warn); }
 .timeline li.bad::before { background: var(--bad); border-color: var(--bad); }

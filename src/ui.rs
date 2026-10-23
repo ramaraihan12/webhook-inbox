@@ -130,7 +130,9 @@ fn short(id: Uuid) -> String {
 }
 
 fn fmt_ms(ms: i64) -> String {
-    if ms >= 10_000 {
+    if ms == 0 {
+        "under 1 ms".to_string()
+    } else if ms >= 10_000 {
         format!("{:.0} s", ms as f64 / 1000.0)
     } else if ms >= 1000 {
         format!("{:.1} s", ms as f64 / 1000.0)
