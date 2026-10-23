@@ -6,6 +6,7 @@
 mod github;
 mod hmac_generic;
 mod midtrans;
+mod xendit;
 
 use http::HeaderMap;
 use subtle::ConstantTimeEq;
@@ -13,6 +14,7 @@ use subtle::ConstantTimeEq;
 pub use github::GithubVerifier;
 pub use hmac_generic::{Encoding, HmacVerifier};
 pub use midtrans::MidtransVerifier;
+pub use xendit::XenditVerifier;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerifyError {
