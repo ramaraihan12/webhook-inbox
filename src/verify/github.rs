@@ -2,18 +2,18 @@ use hmac::{Hmac, KeyInit, Mac};
 use http::HeaderMap;
 use sha2::Sha256;
 
-use super::{VerifyError, ct_eq, header_str};
+use super::{Secret, VerifyError, ct_eq, header_str};
 
 const HEADER: &str = "x-hub-signature-256";
 
 /// GitHub: `X-Hub-Signature-256: sha256=<hex hmac of the raw body>`.
 #[derive(Debug, Clone)]
 pub struct GithubVerifier {
-    secret: Vec<u8>,
+    secret: Secret,
 }
 
 impl GithubVerifier {
-    pub fn new(secret: impl Into<Vec<u8>>) -> Self {
+    pub fn new(secret: impl Into<Secret>) -> Self {
         Self {
             secret: secret.into(),
         }
@@ -29,8 +29,8 @@ impl GithubVerifier {
             return Err(VerifyError::Malformed);
         }
 
-        let mut mac =
-            Hmac::<Sha256>::new_from_slice(&self.secret).expect("hmac takes any key length");
+        let mut mac = Hmac::<Sha256>::new_from_slice(self.secret.as_bytes())
+            .expect("hmac takes any key length");
         mac.update(body);
         let expected = mac.finalize().into_bytes();
 

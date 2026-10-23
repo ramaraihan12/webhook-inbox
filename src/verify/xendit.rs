@@ -1,6 +1,6 @@
 use http::HeaderMap;
 
-use super::{VerifyError, ct_eq, header_str};
+use super::{Secret, VerifyError, ct_eq, header_str};
 
 const HEADER: &str = "x-callback-token";
 
@@ -8,11 +8,11 @@ const HEADER: &str = "x-callback-token";
 /// dashboard in `x-callback-token`, so this is a shared-secret check only.
 #[derive(Debug, Clone)]
 pub struct XenditVerifier {
-    token: Vec<u8>,
+    token: Secret,
 }
 
 impl XenditVerifier {
-    pub fn new(token: impl Into<Vec<u8>>) -> Self {
+    pub fn new(token: impl Into<Secret>) -> Self {
         Self {
             token: token.into(),
         }
@@ -20,7 +20,7 @@ impl XenditVerifier {
 
     pub fn verify(&self, headers: &HeaderMap) -> Result<(), VerifyError> {
         let given = header_str(headers, HEADER)?;
-        if ct_eq(&self.token, given.as_bytes()) {
+        if ct_eq(self.token.as_bytes(), given.as_bytes()) {
             Ok(())
         } else {
             Err(VerifyError::Mismatch)

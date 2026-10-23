@@ -1,7 +1,7 @@
 use serde_json::Value;
 use sha2::{Digest, Sha512};
 
-use super::{VerifyError, ct_eq};
+use super::{Secret, VerifyError, ct_eq};
 
 /// Midtrans HTTP notifications carry their own signature in the body:
 /// `signature_key = sha512(order_id + status_code + gross_amount + server_key)`,
@@ -9,11 +9,11 @@ use super::{VerifyError, ct_eq};
 /// they are hashed exactly as sent (`"10000.00"`, not `10000`).
 #[derive(Debug, Clone)]
 pub struct MidtransVerifier {
-    server_key: String,
+    server_key: Secret,
 }
 
 impl MidtransVerifier {
-    pub fn new(server_key: impl Into<String>) -> Self {
+    pub fn new(server_key: impl Into<Secret>) -> Self {
         Self {
             server_key: server_key.into(),
         }

@@ -61,3 +61,58 @@ impl Verifier {
         }
     }
 }
+
+/// Key material that prints as `[redacted]`, so a stray `{:?}` or a derived
+/// `Debug` on a config struct cannot leak it into logs.
+#[derive(Clone)]
+pub struct Secret(Vec<u8>);
+
+impl Secret {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[redacted]")
+    }
+}
+
+impl From<&str> for Secret {
+    fn from(s: &str) -> Self {
+        Secret(s.as_bytes().to_vec())
+    }
+}
+
+impl From<String> for Secret {
+    fn from(s: String) -> Self {
+        Secret(s.into_bytes())
+    }
+}
+
+impl From<Vec<u8>> for Secret {
+    fn from(v: Vec<u8>) -> Self {
+        Secret(v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_output_hides_secrets() {
+        let v = Verifier::Github(GithubVerifier::new("super-secret-value"));
+        assert!(!format!("{v:?}").contains("super-secret-value"));
+        let m = Verifier::Midtrans(MidtransVerifier::new("super-secret-value"));
+        assert!(!format!("{m:?}").contains("super-secret-value"));
+    }
+
+    #[test]
+    fn ct_eq_rejects_different_lengths() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abcd"));
+        assert!(!ct_eq(b"", b"a"));
+    }
+}

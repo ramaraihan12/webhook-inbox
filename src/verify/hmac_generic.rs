@@ -6,7 +6,7 @@ use hmac::{Hmac, KeyInit, Mac};
 use http::HeaderMap;
 use sha2::Sha256;
 
-use super::{VerifyError, ct_eq, header_str};
+use super::{Secret, VerifyError, ct_eq, header_str};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
@@ -25,7 +25,7 @@ pub enum Encoding {
 ///   `tolerance` of now, which stops an old capture from being replayed.
 #[derive(Debug, Clone)]
 pub struct HmacVerifier {
-    secret: Vec<u8>,
+    secret: Secret,
     header: String,
     encoding: Encoding,
     prefix: Option<String>,
@@ -33,7 +33,7 @@ pub struct HmacVerifier {
 }
 
 impl HmacVerifier {
-    pub fn new(secret: impl Into<Vec<u8>>, header: impl Into<String>) -> Self {
+    pub fn new(secret: impl Into<Secret>, header: impl Into<String>) -> Self {
         Self {
             secret: secret.into(),
             header: header.into().to_ascii_lowercase(),
@@ -123,8 +123,8 @@ impl HmacVerifier {
     }
 
     fn mac(&self, parts: &[&[u8]]) -> Vec<u8> {
-        let mut mac =
-            Hmac::<Sha256>::new_from_slice(&self.secret).expect("hmac takes any key length");
+        let mut mac = Hmac::<Sha256>::new_from_slice(self.secret.as_bytes())
+            .expect("hmac takes any key length");
         for part in parts {
             mac.update(part);
         }
