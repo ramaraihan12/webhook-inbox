@@ -6,8 +6,16 @@
 
 #![allow(dead_code)]
 
+use std::sync::Arc;
+
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha256;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Executor, PgPool};
+use tokio::net::TcpListener;
+use tokio::sync::Notify;
+use webhook_inbox::app::{self, AppState};
+use webhook_inbox::config::Config;
 
 pub struct TestDb {
     pub pool: PgPool,
@@ -65,4 +73,53 @@ impl TestDb {
             )))
             .await;
     }
+}
+
+/// Secrets the test configs refer to through `secret_env`.
+pub fn test_env(name: &str) -> Option<String> {
+    match name {
+        "GITHUB_SECRET" => Some("gh-secret".to_string()),
+        "XENDIT_TOKEN" => Some("xnd-token".to_string()),
+        _ => None,
+    }
+}
+
+pub struct TestApp {
+    pub base: String,
+    pub state: AppState,
+    pub client: reqwest::Client,
+}
+
+impl TestApp {
+    /// Starts the HTTP side only.
+    pub async fn start(pool: &PgPool, toml: &str) -> TestApp {
+        let config = Arc::new(Config::from_toml(toml, &test_env).unwrap());
+        let state = AppState {
+            pool: pool.clone(),
+            config,
+            wake: Arc::new(Notify::new()),
+            metrics: webhook_inbox::telemetry::install_metrics(),
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let router = app::router(state.clone());
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        TestApp {
+            base,
+            state,
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+pub fn github_signature(secret: &str, body: &[u8]) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(body);
+    format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+}
+
+pub async fn count(pool: &PgPool, sql: &'static str) -> i64 {
+    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
