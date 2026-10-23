@@ -107,7 +107,7 @@ pub async fn claim_jobs(
         .collect())
 }
 
-/// Records the result of a try and moves the job on, in one transaction.
+/// Records the result of a try and moves the job on, atomically.
 ///
 /// The update only applies while this worker still owns the job (it is in
 /// flight and `attempts` still equals this try). If the lease ran out and
@@ -124,17 +124,25 @@ pub async fn finish_job(
         Verdict::Dead => ("dead", None, "dead"),
     };
 
-    let mut tx = pool.begin().await?;
-    let updated = sqlx::query(
-        "update jobs
-         set status = $3,
-             next_attempt_at = case when $4::float8 is null then next_attempt_at
-                                    else now() + make_interval(secs => $4::float8) end,
-             locked_until = null,
-             last_status = $5,
-             last_error = $6,
-             finished_at = case when $3 in ('done', 'dead') then now() end
-         where id = $1 and status = 'in_flight' and attempts = $2",
+    // One statement, so a try costs one round trip: the update only succeeds
+    // while this worker still owns the job, and the attempt row is inserted
+    // from whatever the update returned.
+    let recorded = sqlx::query(
+        "with moved as (
+           update jobs
+           set status = $3,
+               next_attempt_at = case when $4::float8 is null then next_attempt_at
+                                      else now() + make_interval(secs => $4::float8) end,
+               locked_until = null,
+               last_status = $5,
+               last_error = $6,
+               finished_at = case when $3 in ('done', 'dead') then now() end
+           where id = $1 and status = 'in_flight' and attempts = $2
+           returning id, delivery_id
+         )
+         insert into attempts
+           (job_id, delivery_id, attempt, started_at, duration_ms, http_status, error, outcome, retry_in_ms)
+         select id, delivery_id, $2, $7, $8, $5, $6, $9, $10 from moved",
     )
     .bind(job.job_id)
     .bind(job.attempt)
@@ -142,33 +150,15 @@ pub async fn finish_job(
     .bind(delay)
     .bind(result.http_status)
     .bind(&result.error)
-    .execute(&mut *tx)
+    .bind(result.started_at)
+    .bind(result.duration_ms)
+    .bind(outcome)
+    .bind(delay.map(|s| (s * 1000.0) as i64))
+    .execute(pool)
     .await?
     .rows_affected();
 
-    if updated == 0 {
-        tx.rollback().await?;
-        return Ok(false);
-    }
-
-    sqlx::query(
-        "insert into attempts
-           (job_id, delivery_id, attempt, started_at, duration_ms, http_status, error, outcome, retry_in_ms)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-    )
-    .bind(job.job_id)
-    .bind(job.delivery_id)
-    .bind(job.attempt)
-    .bind(result.started_at)
-    .bind(result.duration_ms)
-    .bind(result.http_status)
-    .bind(&result.error)
-    .bind(outcome)
-    .bind(delay.map(|s| (s * 1000.0) as i64))
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(true)
+    Ok(recorded == 1)
 }
 
 /// Queues a fresh job for every target of a verified delivery. The old jobs

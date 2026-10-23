@@ -121,7 +121,9 @@ async fn serve(config_path: &Path, url: Option<String>) -> Result<()> {
         Config::load(config_path).with_context(|| format!("loading {}", config_path.display()))?,
     );
     let url = database_url(url)?;
-    let pool_size = config.worker.count as u32 + 16;
+    // Each delivery in flight needs a connection only for the moment it is
+    // recorded, but a full batch finishing together should not queue for one.
+    let pool_size = (config.worker.count as i64 * config.worker.batch + 8).min(64) as u32;
     let pool = store::connect(&url, pool_size)
         .await
         .context("connecting to postgres")?;
