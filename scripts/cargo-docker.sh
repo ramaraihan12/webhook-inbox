@@ -5,6 +5,8 @@
 #   scripts/cargo-docker.sh test
 #   scripts/cargo-docker.sh clippy --all-targets -- -D warnings
 set -eu
+# Git Bash on Windows would rewrite the container paths below.
+export MSYS_NO_PATHCONV=1
 
 IMAGE="${RUST_IMAGE:-rust:1.99-bookworm}"
 TEST_DB="${TEST_DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:5433/webhook_inbox_test}"
