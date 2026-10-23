@@ -1,0 +1,48 @@
+[package]
+name = "webhook-inbox"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Receive webhooks, verify signatures, store every delivery and forward it with retries"
+publish = false
+
+[lib]
+name = "webhook_inbox"
+path = "src/lib.rs"
+
+[[bin]]
+name = "webhook-inbox"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8.9"
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net"] }
+tokio-util = "0.7"
+futures-util = "0.3"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "uuid", "json", "migrate", "macros"] }
+tower-http = { version = "0.7", features = ["trace", "limit", "timeout"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+hmac = "0.13"
+sha2 = "0.11"
+subtle = "2.6"
+hex = "0.4"
+base64 = "0.23"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+askama = "0.16"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
+clap = { version = "4.6", features = ["derive", "env"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+humantime = "2.4"
+httpdate = "1"
+fastrand = "2"
+thiserror = "2"
+anyhow = "1"
+
+[dev-dependencies]
+wiremock = "0.6"

@@ -1,0 +1,13 @@
+# rust
+target/
+*.pdb
+
+# local config and secrets
+.env
+inbox.local.toml
+
+# editors
+.vscode/
+.idea/
+.cursor/
+.DS_Store
