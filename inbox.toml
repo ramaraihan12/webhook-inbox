@@ -13,7 +13,7 @@ batch = 8
 poll_interval = "500ms"
 lease = "2m"
 
-# Short on purpose so the demo shows a dead job in about a minute.
+# Short on purpose so the demo shows a dead job in about 10 seconds.
 # The defaults are 8 tries, base 2s, cap 1h.
 [retry]
 max_attempts = 5
