@@ -88,6 +88,9 @@ pub struct Source {
 pub struct Target {
     pub name: String,
     pub url: String,
+    /// The url as written in `inbox.toml`, with `${VAR}` unexpanded. Safe to
+    /// print, unlike `url`, which may carry a token.
+    pub url_template: String,
     pub timeout: Duration,
     pub headers: Vec<(HeaderName, HeaderValue)>,
 }
@@ -292,6 +295,19 @@ impl RawConfig {
             let name = raw.name.clone();
             let source = resolve_source(raw, env)
                 .map_err(|e| ConfigError::Invalid(format!("source {name:?}: {e}")))?;
+            // A request that can outlive the lease would be claimed a second
+            // time while it is still running, and the target would get two.
+            for t in &source.targets {
+                if t.timeout + LEASE_MARGIN >= worker.lease {
+                    return invalid(format!(
+                        "source {name:?}: target {:?}: timeout {} must be at least {} shorter than worker.lease ({})",
+                        t.name,
+                        humantime::format_duration(t.timeout),
+                        humantime::format_duration(LEASE_MARGIN),
+                        humantime::format_duration(worker.lease),
+                    ));
+                }
+            }
             sources.push(source);
         }
 
@@ -450,6 +466,7 @@ fn resolve_target(
     Ok(Target {
         name: raw.name,
         url,
+        url_template: raw.url,
         timeout,
         headers,
     })
@@ -467,7 +484,6 @@ fn expand_env(value: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Strin
         let var = &after[..end];
         let val = env(var).ok_or_else(|| format!("environment variable {var} is not set"))?;
         out.push_str(&val);
-        url_template: raw.url,
         rest = &after[end + 1..];
     }
     out.push_str(rest);
@@ -703,24 +719,14 @@ mod tests {
         );
         let c = parse(&ok).unwrap();
         assert_eq!(c.sources[0].targets[0].url, "http://s3cret.local/in");
-        let unset = MINIMAL.replace("http://localhost:3000/hooks/github", "${NOT_SET}/in");
-        assert!(err(&unset).contains("NOT_SET"));
-    }
-
-    #[test]
-    fn env_expansion() {
-        assert_eq!(expand_env("plain", &env).unwrap(), "plain");
-        assert_eq!(
-            expand_env("a${APP_TOKEN}b${APP_TOKEN}", &env).unwrap(),
-            "as3cretbs3cret"
-        );
-        assert!(expand_env("${APP_TOKEN", &env).is_err());
-    }
-}
         assert_eq!(
             c.sources[0].targets[0].url_template,
             "http://${APP_TOKEN}.local/in"
         );
+        let unset = MINIMAL.replace("http://localhost:3000/hooks/github", "${NOT_SET}/in");
+        assert!(err(&unset).contains("NOT_SET"));
+    }
+
     #[test]
     fn a_target_timeout_must_leave_room_inside_the_lease() {
         let with = |lease: &str, timeout: &str| {
@@ -745,3 +751,13 @@ mod tests {
         assert!(parse(&with("30s", "29500ms")).is_err());
     }
 
+    #[test]
+    fn env_expansion() {
+        assert_eq!(expand_env("plain", &env).unwrap(), "plain");
+        assert_eq!(
+            expand_env("a${APP_TOKEN}b${APP_TOKEN}", &env).unwrap(),
+            "as3cretbs3cret"
+        );
+        assert!(expand_env("${APP_TOKEN", &env).is_err());
+    }
+}
