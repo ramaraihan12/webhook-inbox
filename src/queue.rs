@@ -52,6 +52,8 @@ pub struct AttemptResult {
     pub error: Option<String>,
     pub started_at: DateTime<Utc>,
     pub duration_ms: i32,
+    /// The same duration at full precision, for the latency histogram.
+    pub elapsed: Duration,
 }
 
 /// Takes up to `limit` due jobs and locks them for `lease`.
