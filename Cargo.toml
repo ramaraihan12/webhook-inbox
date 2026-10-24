@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 description = "Receive webhooks, verify signatures, store every delivery and forward it with retries"
 publish = false
+default-run = "webhook-inbox"
 
 [lib]
 name = "webhook_inbox"
