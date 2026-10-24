@@ -362,6 +362,8 @@ struct DetailView {
     reject_reason: String,
     event_id: String,
     body_size: String,
+    /// What a passed check covers, empty for a rejected delivery.
+    verified_scope: String,
     body: String,
     headers: Vec<(String, String)>,
 }
@@ -580,6 +582,10 @@ async fn detail_page(State(st): State<AppState>, Path(id): Path<Uuid>) -> Respon
             reject_reason: d.reject_reason.clone().unwrap_or_default(),
             event_id: d.event_id.clone().unwrap_or_default(),
             body_size: size_label(d.body.len()),
+            verified_scope: match (d.verification.as_str(), st.config.source(&d.source)) {
+                ("verified", Some(src)) => src.verifier.scope().text.to_string(),
+                _ => String::new(),
+            },
             body: render_body(&d.body),
             headers: d.headers,
         },

@@ -65,6 +65,10 @@ async fn forwards_the_original_body_with_inbox_headers() {
     assert_eq!(req.headers["x-inbox-attempt"], "1");
     assert_eq!(req.headers["x-inbox-source"], "github");
     assert_eq!(
+        req.headers["x-inbox-verified"], "body-hmac",
+        "the target is told what the check covered"
+    );
+    assert_eq!(
         req.headers["x-app-key"], "k-123",
         "target headers are added"
     );

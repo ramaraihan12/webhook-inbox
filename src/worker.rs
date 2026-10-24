@@ -11,7 +11,7 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::backoff;
-use crate::config::{Config, Target};
+use crate::config::{Config, Source, Target};
 use crate::queue::{self, AttemptResult, Claimed, Verdict};
 
 /// Request headers that must not be copied from the original delivery: they
@@ -187,11 +187,12 @@ impl Worker {
             elapsed: clock.elapsed(),
         };
 
-        let Some(target) = self
-            .config
-            .source(&job.source)
-            .and_then(|s| s.targets.iter().find(|t| t.name == job.target))
-        else {
+        let Some((source, target)) = self.config.source(&job.source).and_then(|s| {
+            s.targets
+                .iter()
+                .find(|t| t.name == job.target)
+                .map(|t| (s, t))
+        }) else {
             return finish(
                 Verdict::Dead,
                 None,
@@ -206,7 +207,7 @@ impl Worker {
             .client
             .post(&job.url)
             .timeout(target.timeout)
-            .headers(forward_headers(job, target))
+            .headers(forward_headers(job, source, target))
             .body(job.body.clone());
 
         let (http_status, error, retry_after) = match request.send().await {
@@ -272,7 +273,7 @@ fn describe_error(e: reqwest::Error) -> String {
 
 /// The original headers (minus hop-by-hop ones), then the target's own, then
 /// the `x-inbox-*` headers. Later entries replace earlier ones.
-fn forward_headers(job: &Claimed, target: &Target) -> HeaderMap {
+fn forward_headers(job: &Claimed, source: &Source, target: &Target) -> HeaderMap {
     let mut out = HeaderMap::new();
     for (name, value) in &job.headers {
         if NOT_FORWARDED.contains(&name.as_str()) || name.starts_with("x-inbox-") {
@@ -293,6 +294,12 @@ fn forward_headers(job: &Claimed, target: &Target) -> HeaderMap {
         HeaderValue::from_str(&job.delivery_id.to_string()).expect("uuid is ascii"),
     );
     out.insert("x-inbox-attempt", HeaderValue::from(job.attempt));
+    // What the signature check covered, so the target knows when to confirm
+    // with the provider before it acts (see "Confirm before you act" in the README).
+    out.insert(
+        "x-inbox-verified",
+        HeaderValue::from_static(source.verifier.scope().tag),
+    );
     out.insert(
         "x-inbox-source",
         HeaderValue::from_str(&job.source).expect("source names are ascii"),

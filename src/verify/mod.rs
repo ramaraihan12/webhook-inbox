@@ -62,6 +62,40 @@ impl Verifier {
     }
 }
 
+/// What a passed check does and does not prove. The tag goes to targets in
+/// `x-inbox-verified`, the text is shown on the delivery page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scope {
+    pub tag: &'static str,
+    pub text: &'static str,
+}
+
+impl Verifier {
+    pub fn scope(&self) -> Scope {
+        match self {
+            Verifier::Github(_) => Scope {
+                tag: "body-hmac",
+                text: "HMAC-SHA256 over the whole body. Any change to the body fails the check.",
+            },
+            Verifier::Hmac(_) => Scope {
+                tag: "body-hmac",
+                text: "HMAC over the whole body. Any change to the body fails the check.",
+            },
+            Verifier::Midtrans(_) => Scope {
+                tag: "midtrans-signed-fields",
+                text: "Signature covers order_id, status_code and gross_amount only. \
+                       transaction_status, transaction_id and fraud_status are not signed, \
+                       so confirm the status with the Midtrans API before acting on it.",
+            },
+            Verifier::Xendit(_) => Scope {
+                tag: "shared-token",
+                text: "Shared token in x-callback-token. The body is not signed, so confirm \
+                       the status with the Xendit API before acting on it.",
+            },
+        }
+    }
+}
+
 /// Key material that prints as `[redacted]`, so a stray `{:?}` or a derived
 /// `Debug` on a config struct cannot leak it into logs.
 #[derive(Clone)]
@@ -107,6 +141,20 @@ mod tests {
         assert!(!format!("{v:?}").contains("super-secret-value"));
         let m = Verifier::Midtrans(MidtransVerifier::new("super-secret-value"));
         assert!(!format!("{m:?}").contains("super-secret-value"));
+    }
+
+    #[test]
+    fn scope_says_what_each_check_covers() {
+        let m = Verifier::Midtrans(MidtransVerifier::new("k")).scope();
+        assert_eq!(m.tag, "midtrans-signed-fields");
+        assert!(m.text.contains("order_id") && m.text.contains("not signed"));
+        let x = Verifier::Xendit(XenditVerifier::new("k")).scope();
+        assert_eq!(x.tag, "shared-token");
+        assert!(x.text.contains("body is not signed"));
+        assert_eq!(
+            Verifier::Github(GithubVerifier::new("k")).scope().tag,
+            "body-hmac"
+        );
     }
 
     #[test]

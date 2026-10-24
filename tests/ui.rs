@@ -246,6 +246,7 @@ async fn the_detail_page_shows_pretty_json_headers_and_a_timeline() {
         html.contains("&#34;order&#34;: &#34;INV-9&#34;,\n"),
         "pretty printed, one key per line"
     );
+    assert!(html.contains("HMAC-SHA256 over the whole body"));
     assert!(
         !html.contains("<script>alert(1)</script>"),
         "the body is escaped"
@@ -429,5 +430,52 @@ async fn dead_letters_list_dead_jobs_and_replay_takes_them_off_the_list() {
         after.contains("No dead jobs"),
         "a replayed job leaves the dead-letter list"
     );
+    db.cleanup().await;
+}
+
+#[tokio::test]
+async fn the_detail_page_says_what_a_shared_token_does_not_cover() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let server = target_that(200).await;
+    let config = format!(
+        r#"{}
+        [[source]]
+        name = "xendit"
+        verifier = "xendit"
+        secret_env = "XENDIT_TOKEN"
+        [[source.target]]
+        name = "app"
+        url = "{}/hook"
+        timeout = "400ms"
+        "#,
+        fast_config("http://127.0.0.1:9/x", 3),
+        server.uri()
+    );
+    let app = TestApp::start(&db.pool, &config).await;
+    let res = app
+        .client
+        .post(format!("{}/in/xendit", app.base))
+        .header("x-callback-token", "xnd-token")
+        .body(r#"{"id":"inv-1","status":"PAID"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let id = res.headers()["x-inbox-delivery-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let html = body_of(
+        get(&app, &format!("/ui/deliveries/{id}"))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(html.contains("The body is not signed"), "{html}");
+    assert!(html.contains("confirm"));
     db.cleanup().await;
 }
