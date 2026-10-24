@@ -372,9 +372,18 @@ fn render_body(body: &[u8]) -> String {
     let shown = &body[..body.len().min(BODY_PREVIEW_BYTES)];
     let mut text = if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
         serde_json::to_string_pretty(&json).unwrap_or_default()
-    } else if let Ok(s) = std::str::from_utf8(shown) {
+    } else if let Some(s) = valid_text {
         s.to_string()
     } else {
+    // A cut in the middle of a character is not a reason to call it binary:
+    // keep the valid part when the only error is an incomplete tail.
+    let valid_text = match std::str::from_utf8(shown) {
+        Ok(s) => Some(s),
+        Err(e) if e.error_len().is_none() && shown.len() < body.len() => {
+            std::str::from_utf8(&shown[..e.valid_up_to()]).ok()
+        }
+        Err(_) => None,
+    };
         let preview: Vec<String> = body.iter().take(256).map(|b| format!("{b:02x}")).collect();
         format!("binary body, first bytes in hex:\n{}", preview.join(" "))
     };
@@ -385,7 +394,7 @@ fn render_body(body: &[u8]) -> String {
         }
         text.truncate(end);
         text.push_str("\n... cut here, the stored copy is complete");
-    } else if body.len() > BODY_PREVIEW_BYTES && std::str::from_utf8(shown).is_ok() {
+    } else if body.len() > BODY_PREVIEW_BYTES && valid_text.is_some() {
         text.push_str("\n... cut here, the stored copy is complete");
     }
     text
@@ -741,4 +750,25 @@ async fn htmx() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         include_str!("../static/htmx.min.js"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_long_text_body_cut_mid_character_is_still_shown_as_text() {
+        // 'a' then two-byte characters: the 64 KiB cut falls inside one.
+        let body = format!("a{}", "\u{e9}".repeat(40_000)).into_bytes();
+        assert!(std::str::from_utf8(&body[..BODY_PREVIEW_BYTES]).is_err());
+        let shown = render_body(&body);
+        assert!(!shown.starts_with("binary body"));
+        assert!(shown.ends_with("the stored copy is complete"));
+    }
+
+    #[test]
+    fn real_binary_is_still_shown_as_hex() {
+        let shown = render_body(&[0xff, 0xfe, 0x00, 0x01]);
+        assert!(shown.starts_with("binary body"));
+    }
 }
