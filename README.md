@@ -31,9 +31,9 @@ This Midtrans delivery has two targets. `billing` is a demo endpoint that fails 
 ## How it works
 
 - `inbox.toml` lists sources. Each one has a path `/in/{source}`, a verifier, the name of the env var that holds its secret, how to find the provider's event id (a header or JSON pointers) and one or more targets with a URL, extra headers and a timeout. `check-config` loads and prints it.
-- Verifiers: GitHub (`X-Hub-Signature-256`), generic HMAC-SHA256 with a configurable header and an optional Stripe-style `t=...,v1=...` timestamp tolerance, Midtrans (sha512 of `order_id + status_code + gross_amount + server_key` against `signature_key` in the body) and Xendit (`x-callback-token`). Every comparison goes through `subtle`, so it is constant time.
+- Verifiers: GitHub (`X-Hub-Signature-256`), generic HMAC-SHA256 with a configurable header and an optional Stripe-style `t=...,v1=...` timestamp tolerance, Midtrans (sha512 of `order_id + status_code + gross_amount + server_key` against `signature_key` in the body) and Xendit (the static `x-callback-token`). Every comparison goes through `subtle`, so it is constant time. The last two prove less than the first two, see "What verified means" below.
 - A verified request has its raw body, headers and result stored, plus one job per target, and the answer goes out before any forwarding. A second delivery with the same event id gets `200` with `x-inbox-duplicate: true` and no new jobs. Credentials such as `authorization` and `x-callback-token` are not stored.
-- Workers claim jobs with `SELECT ... FOR UPDATE SKIP LOCKED` and a lease, so several instances can share one database. Each attempt POSTs the original body with `x-inbox-delivery-id` and `x-inbox-attempt`. A 2xx ends the job. Anything else retries with exponential backoff and full jitter (defaults: 8 tries, 2 s base, 1 h cap), `Retry-After` is honoured up to a cap, and after the last try the job is `dead`.
+- Workers claim jobs with `SELECT ... FOR UPDATE SKIP LOCKED` and a lease, so several instances can share one database. Each attempt POSTs the original body with `x-inbox-delivery-id`, `x-inbox-attempt` and `x-inbox-verified` (what the check covered). A 2xx ends the job. Anything else retries with exponential backoff and full jitter (defaults: 8 tries, 2 s base, 1 h cap), `Retry-After` is honoured up to a cap, and after the last try the job is `dead`.
 - `/ui` needs `ADMIN_TOKEN`, as a bearer token or as the Basic auth password. Replay creates fresh jobs, it never edits history. The page is server-rendered with askama and a vendored htmx file, no CDN.
 - `/healthz`, `/metrics` (Prometheus), and on SIGTERM the server stops accepting and lets in-flight deliveries finish. `prune --older-than 30d` deletes old deliveries but keeps anything still queued.
 
@@ -94,9 +94,27 @@ One laptop (Ryzen 9 5900HX, 16 GB), Docker Desktop, the compose stack with Postg
 
 Receiving is faster than delivering, so a burst builds a backlog and the workers catch up afterwards. At 800 requests/s they keep up. These are one run each, not averages. Raw output is in my notes folder, not in the repo.
 
+## What verified means
+
+| Source | The check covers | It does not cover |
+| --- | --- | --- |
+| GitHub, generic HMAC | the whole body | a replay, unless the HMAC source sets a timestamp tolerance (GitHub sends none) |
+| Midtrans | `order_id`, `status_code`, `gross_amount` and the server key | `transaction_status`, `transaction_id`, `fraud_status` and the rest of the body, and there is no timestamp |
+| Xendit | a shared token in `x-callback-token` | the body, which is not signed at all |
+
+A Midtrans body with the same `signature_key` and a different `transaction_status` passes, because the status is not part of what gets hashed. The event id used for dedupe (`transaction_id` plus `transaction_status`) also comes from unsigned fields. For Xendit, whoever holds the token can send any body. The delivery page prints the same limits under Verification.
+
+So treat a verified Midtrans or Xendit callback as "this probably came from the provider", not as proof of the status in it. Before your handler moves money or marks an order paid, ask the provider for the current state and act on that answer:
+
+- Midtrans: `GET /v2/{order_id}/status` with your server key as the Basic auth user.
+- Xendit: fetch the invoice (`GET /v2/invoices/{id}`) with your secret API key.
+- `x-inbox-verified` on every forwarded request (`body-hmac`, `midtrans-signed-fields` or `shared-token`) tells your handler which sources need that call.
+
+I wrote those two calls from the providers' docs and have not run them against live accounts. The inbox does not make them for you.
+
 ## Notes
 
-- I've only run this against my own demo endpoints and made-up payloads. The Midtrans and Xendit verifiers are written against their docs and tested with computed vectors, not with live callbacks.
+- I've only run this against my own demo endpoints and made-up payloads. The Midtrans and Xendit verifiers are written against their docs and tested with computed vectors, not with live callbacks, and they cover less of the body than the HMAC ones.
 - Verifier secrets live in env vars, one per source. There is no rotation and no second secret during a changeover.
 - Admin auth is one shared token with no user accounts or roles. Put it behind TLS and do not expose it on the open internet.
 - Bodies are stored as received, up to `max_body_bytes` (1 MB in the demo config). The UI shows them to anyone with the token, so personal data in a payload is visible there.
