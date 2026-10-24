@@ -7,7 +7,7 @@ use chrono::Utc;
 use futures_util::future::join_all;
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use sqlx::PgPool;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::backoff;
@@ -77,23 +77,61 @@ impl Worker {
 
     async fn claim_loop(&self, id: usize, shutdown: CancellationToken) {
         let cfg = &self.config.worker;
+        let slots = cfg.batch as u32;
+        // One slot per job this loop may have in flight. A slow target only
+        // holds its own slots, the loop keeps claiming with the free ones.
+        let sem = Arc::new(Semaphore::new(slots as usize));
         while !shutdown.is_cancelled() {
-            let jobs = match queue::claim_jobs(&self.pool, cfg.batch, cfg.lease).await {
+            let Some(first) = self.next_slot(&sem, &shutdown).await else {
+                break;
+            };
+            let mut permits = vec![first];
+            while permits.len() < slots as usize {
+                match sem.clone().try_acquire_owned() {
+                    Ok(p) => permits.push(p),
+                    Err(_) => break,
+                }
+            }
+            let jobs = match queue::claim_jobs(&self.pool, permits.len() as i64, cfg.lease).await {
                 Ok(jobs) => jobs,
                 Err(e) => {
                     tracing::error!(worker = id, error = %e, "could not claim jobs");
+                    drop(permits);
                     self.idle(&shutdown, cfg.poll_interval).await;
                     continue;
                 }
             };
             if jobs.is_empty() {
+                drop(permits);
                 self.idle(&shutdown, cfg.poll_interval).await;
                 continue;
             }
-            // Not raced against `shutdown`: a claimed batch is always finished.
-            join_all(jobs.into_iter().map(|job| self.process(job))).await;
+            // Not raced against `shutdown`: a claimed job is always finished.
+            // Permits beyond the jobs found are released right here.
+            for job in jobs {
+                let permit = permits.pop().expect("one permit per claimed job");
+                let worker = self.clone();
+                tokio::spawn(async move {
+                    worker.process(job).await;
+                    drop(permit);
+                });
+            }
         }
+        // Every slot back means every started delivery has finished.
+        let _ = sem.acquire_many(slots).await;
         tracing::debug!(worker = id, "worker stopped");
+    }
+
+    /// Waits for a free slot, or returns `None` once shutdown begins.
+    async fn next_slot(
+        &self,
+        sem: &Arc<Semaphore>,
+        shutdown: &CancellationToken,
+    ) -> Option<OwnedSemaphorePermit> {
+        tokio::select! {
+            _ = shutdown.cancelled() => None,
+            p = sem.clone().acquire_owned() => p.ok(),
+        }
     }
 
     async fn idle(&self, shutdown: &CancellationToken, poll: Duration) {
