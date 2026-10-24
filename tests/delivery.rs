@@ -499,7 +499,8 @@ async fn a_job_whose_lease_expired_is_picked_up_again() {
 
     // A worker claimed the job and then died: in flight, lease in the past.
     sqlx::query(
-        "update jobs set status = 'in_flight', attempts = 1, locked_until = now() - interval '1 minute'",
+        "update jobs set status = 'in_flight', attempts = 1, locked_until = now() - interval '1 minute',
+             next_attempt_at = now() - interval '1 minute'",
     )
     .execute(&db.pool)
     .await

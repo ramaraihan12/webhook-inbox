@@ -57,8 +57,10 @@ pub struct AttemptResult {
 /// Takes up to `limit` due jobs and locks them for `lease`.
 ///
 /// Due means pending with `next_attempt_at` in the past, or in flight with an
-/// expired lease (the worker holding it died). `attempts` goes up by one here,
-/// so the number a worker sees is the number of this try.
+/// expired lease (the worker holding it died). Claiming moves `next_attempt_at`
+/// to the lease end, so both cases are one range condition on `next_attempt_at`
+/// that the `jobs_due` index can stop at. `attempts` goes up by one here, so the
+/// number a worker sees is the number of this try.
 pub async fn claim_jobs(
     pool: &PgPool,
     limit: i64,
@@ -67,8 +69,7 @@ pub async fn claim_jobs(
     let rows: Vec<ClaimRow> = sqlx::query_as(
         "with picked as (
                select id from jobs
-               where (status = 'pending' and next_attempt_at <= now())
-                  or (status = 'in_flight' and locked_until < now())
+               where status in ('pending', 'in_flight') and next_attempt_at <= now()
                order by next_attempt_at
                limit $1
                for update skip locked
@@ -76,7 +77,8 @@ pub async fn claim_jobs(
                update jobs j
                set status = 'in_flight',
                    attempts = j.attempts + 1,
-                   locked_until = now() + make_interval(secs => $2)
+                   locked_until = now() + make_interval(secs => $2),
+                   next_attempt_at = now() + make_interval(secs => $2)
                from picked
                where j.id = picked.id
                returning j.id, j.delivery_id, j.target, j.url, j.attempts
