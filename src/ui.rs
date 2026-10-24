@@ -35,6 +35,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/ui/jobs/{id}/replay", post(replay_job))
         .route("/ui/static/app.css", get(css))
         .route("/ui/static/htmx.min.js", get(htmx))
+        .route("/ui/static/app.js", get(app_js))
         .layer(middleware::from_fn_with_state(state, guard))
 }
 
@@ -290,6 +291,7 @@ struct ListPage {
 #[template(path = "rows.html")]
 struct RowsPartial {
     rows: Vec<RowView>,
+    page: i64,
     page_label: i64,
     prev_href: Option<String>,
     next_href: Option<String>,
@@ -319,6 +321,7 @@ async fn rows_partial(State(st): State<AppState>, Query(q): Query<ListQuery>) ->
     match load_rows(&st, &q).await {
         Ok(p) => render(&RowsPartial {
             rows: p.rows,
+            page: p.page,
             page_label: p.page_label,
             prev_href: p.prev_href,
             next_href: p.next_href,
@@ -755,6 +758,13 @@ async fn htmx() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         include_str!("../static/htmx.min.js"),
+    )
+}
+
+async fn app_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("../static/app.js"),
     )
 }
 

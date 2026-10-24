@@ -185,6 +185,10 @@ async fn the_list_filters_by_source_and_status() {
     let none = body_of(get(&app, "/ui/rows?source=nope").send().await.unwrap()).await;
     assert!(none.contains("No deliveries match"));
 
+    // The page number rides along in the refreshed rows, so a filter change can reset it.
+    let paged = body_of(get(&app, "/ui/rows?page=2").send().await.unwrap()).await;
+    assert!(paged.contains(r#"id="page-state""#) && paged.contains(r#"value="2""#));
+
     // Done once a worker has run.
     let workers = app.spawn_workers();
     wait_for_count(
@@ -242,11 +246,11 @@ async fn the_detail_page_shows_pretty_json_headers_and_a_timeline() {
     )
     .await;
     assert!(html.contains("badge dead"));
+    assert!(html.contains("HMAC-SHA256 over the whole body"));
     assert!(
         html.contains("&#34;order&#34;: &#34;INV-9&#34;,\n"),
         "pretty printed, one key per line"
     );
-    assert!(html.contains("HMAC-SHA256 over the whole body"));
     assert!(
         !html.contains("<script>alert(1)</script>"),
         "the body is escaped"
