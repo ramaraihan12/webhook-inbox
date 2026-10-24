@@ -12,6 +12,7 @@ use sqlx::PgPool;
 use tokio::sync::Notify;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
 use crate::verify::Secret;
@@ -37,7 +38,10 @@ pub fn router(state: AppState) -> Router {
         .route("/in/{source}", post(receive::receive))
         // The tower-http layer enforces the limit, including while streaming.
         .layer(DefaultBodyLimit::disable())
-        .layer(RequestBodyLimitLayer::new(max_body));
+        .layer(RequestBodyLimitLayer::new(max_body))
+        // A request span (method, uri) and a line with status and latency, both
+        // at debug level: RUST_LOG=info,tower_http=debug turns them on.
+        .layer(TraceLayer::new_for_http());
 
     Router::new()
         .merge(receive_routes)
