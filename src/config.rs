@@ -88,6 +88,9 @@ pub struct Target {
     pub headers: Vec<(HeaderName, HeaderValue)>,
 }
 
+    /// The url as written in `inbox.toml`, with `${VAR}` unexpanded. Safe to
+    /// print, unlike `url`, which may carry a token.
+    pub url_template: String,
 impl Config {
     pub fn load(path: &Path) -> Result<Config, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
@@ -420,7 +423,11 @@ fn resolve_target(
     }
     let url = expand_env(&raw.url, env).map_err(|e| ConfigError::Invalid(format!("url: {e}")))?;
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return invalid(format!("url: {url:?} must start with http:// or https://"));
+        // Show the template, not the expansion, which may hold a token.
+        return invalid(format!(
+            "url: {:?} must start with http:// or https://",
+            raw.url
+        ));
     }
     let timeout = duration("timeout", &raw.timeout, Duration::from_secs(10))?;
 
@@ -459,6 +466,7 @@ fn expand_env(value: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Strin
         let var = &after[..end];
         let val = env(var).ok_or_else(|| format!("environment variable {var} is not set"))?;
         out.push_str(&val);
+        url_template: raw.url,
         rest = &after[end + 1..];
     }
     out.push_str(rest);
@@ -683,8 +691,11 @@ mod tests {
     #[test]
     fn target_urls_can_use_env_variables() {
         let t = MINIMAL.replace("http://localhost:3000/hooks/github", "${APP_TOKEN}/hooks");
-        // The expanded value is not a url, so this also proves the check runs after expansion.
-        assert!(err(&t).contains("s3cret/hooks"));
+        // The expanded value is not a url, so this also proves the check runs
+        // after expansion, and the message shows the template, never the secret.
+        let e = err(&t);
+        assert!(e.contains("${APP_TOKEN}/hooks"), "{e}");
+        assert!(!e.contains("s3cret"), "{e}");
         let ok = MINIMAL.replace(
             "http://localhost:3000/hooks/github",
             "http://${APP_TOKEN}.local/in",
@@ -705,3 +716,7 @@ mod tests {
         assert!(expand_env("${APP_TOKEN", &env).is_err());
     }
 }
+        assert_eq!(
+            c.sources[0].targets[0].url_template,
+            "http://${APP_TOKEN}.local/in"
+        );

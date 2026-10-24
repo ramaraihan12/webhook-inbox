@@ -97,7 +97,7 @@ fn check_config(path: &Path) -> Result<()> {
     for source in &config.sources {
         println!("/in/{}", source.name);
         for target in &source.targets {
-            println!("  -> {} {}", target.name, target.url);
+            println!("  -> {} {}", target.name, target.url_template);
         }
     }
     Ok(())
