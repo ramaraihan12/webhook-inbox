@@ -21,6 +21,8 @@ pub struct TestDb {
     pub pool: PgPool,
     admin: PgPool,
     schema: String,
+    url: String,
+    cleaned: bool,
 }
 
 impl TestDb {
@@ -35,7 +37,7 @@ impl TestDb {
             .max_connections(1)
             .connect(&url)
             .await
-            .unwrap();
+            .unwrap_or_else(|e| panic!("TEST_DATABASE_URL is set but not reachable: {e}"));
         admin
             .execute(sqlx::AssertSqlSafe(format!("create schema {schema}")))
             .await
@@ -60,10 +62,13 @@ impl TestDb {
             pool,
             admin,
             schema,
+            url,
+            cleaned: false,
         })
     }
 
-    pub async fn cleanup(self) {
+    pub async fn cleanup(mut self) {
+        self.cleaned = true;
         self.pool.close().await;
         let _ = self
             .admin
@@ -72,6 +77,35 @@ impl TestDb {
                 self.schema
             )))
             .await;
+    }
+}
+
+/// A test that fails before `cleanup` would leave its schema behind, so drop it
+/// here from a thread of its own (the test's runtime may be shutting down).
+impl Drop for TestDb {
+    fn drop(&mut self) {
+        if self.cleaned {
+            return;
+        }
+        let (url, schema) = (self.url.clone(), self.schema.clone());
+        let _ = std::thread::spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            rt.block_on(async {
+                if let Ok(pool) = PgPoolOptions::new().max_connections(1).connect(&url).await {
+                    let _ = pool
+                        .execute(sqlx::AssertSqlSafe(format!(
+                            "drop schema if exists {schema} cascade"
+                        )))
+                        .await;
+                }
+            });
+        })
+        .join();
     }
 }
 
