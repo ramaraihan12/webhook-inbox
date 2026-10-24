@@ -359,11 +359,11 @@ struct DetailView {
     status: String,
     received: String,
     verification: String,
+    /// What a passed check covers, empty for a rejected delivery.
+    verified_scope: String,
     reject_reason: String,
     event_id: String,
     body_size: String,
-    /// What a passed check covers, empty for a rejected delivery.
-    verified_scope: String,
     body: String,
     headers: Vec<(String, String)>,
 }
@@ -372,11 +372,6 @@ struct DetailView {
 /// hex preview otherwise.
 fn render_body(body: &[u8]) -> String {
     let shown = &body[..body.len().min(BODY_PREVIEW_BYTES)];
-    let mut text = if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
-        serde_json::to_string_pretty(&json).unwrap_or_default()
-    } else if let Some(s) = valid_text {
-        s.to_string()
-    } else {
     // A cut in the middle of a character is not a reason to call it binary:
     // keep the valid part when the only error is an incomplete tail.
     let valid_text = match std::str::from_utf8(shown) {
@@ -386,6 +381,11 @@ fn render_body(body: &[u8]) -> String {
         }
         Err(_) => None,
     };
+    let mut text = if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    } else if let Some(s) = valid_text {
+        s.to_string()
+    } else {
         let preview: Vec<String> = body.iter().take(256).map(|b| format!("{b:02x}")).collect();
         format!("binary body, first bytes in hex:\n{}", preview.join(" "))
     };
@@ -579,13 +579,13 @@ async fn detail_page(State(st): State<AppState>, Path(id): Path<Uuid>) -> Respon
             status: status.to_string(),
             received: fmt_time(d.received_at),
             verification: d.verification.clone(),
-            reject_reason: d.reject_reason.clone().unwrap_or_default(),
-            event_id: d.event_id.clone().unwrap_or_default(),
-            body_size: size_label(d.body.len()),
             verified_scope: match (d.verification.as_str(), st.config.source(&d.source)) {
                 ("verified", Some(src)) => src.verifier.scope().text.to_string(),
                 _ => String::new(),
             },
+            reject_reason: d.reject_reason.clone().unwrap_or_default(),
+            event_id: d.event_id.clone().unwrap_or_default(),
+            body_size: size_label(d.body.len()),
             body: render_body(&d.body),
             headers: d.headers,
         },
