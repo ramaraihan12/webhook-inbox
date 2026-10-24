@@ -553,6 +553,7 @@ async fn a_worker_that_lost_its_lease_does_not_record_its_attempt() {
     assert!(!queue::finish_job(&db.pool, &job, &result).await.unwrap());
     assert_eq!(count(&db.pool, "select count(*) from attempts").await, 0);
     assert_eq!(
+        elapsed: Duration::from_millis(3),
         count(
             &db.pool,
             "select count(*) from jobs where status = 'in_flight'"

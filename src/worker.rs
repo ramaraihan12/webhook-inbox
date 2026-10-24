@@ -153,7 +153,7 @@ impl Worker {
         metrics::counter!("inbox_delivery_attempts_total", "source" => job.source.clone(), "outcome" => outcome)
             .increment(1);
         metrics::histogram!("inbox_delivery_seconds", "source" => job.source.clone())
-            .record(f64::from(result.duration_ms) / 1000.0);
+            .record(result.elapsed.as_secs_f64());
 
         match queue::finish_job(&self.pool, &job, &result).await {
             Ok(true) => {
@@ -184,6 +184,7 @@ impl Worker {
             error,
             started_at,
             duration_ms: clock.elapsed().as_millis().min(i32::MAX as u128) as i32,
+            elapsed: clock.elapsed(),
         };
 
         let Some(target) = self
