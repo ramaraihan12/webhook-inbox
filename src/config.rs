@@ -30,6 +30,10 @@ pub enum ConfigError {
     Invalid(String),
 }
 
+/// Room a delivery needs between its timeout and the end of its lease, to
+/// record the result before another worker may take the job.
+const LEASE_MARGIN: Duration = Duration::from_secs(1);
+
 fn invalid<T>(msg: impl Into<String>) -> Result<T, ConfigError> {
     Err(ConfigError::Invalid(msg.into()))
 }
@@ -88,9 +92,6 @@ pub struct Target {
     pub headers: Vec<(HeaderName, HeaderValue)>,
 }
 
-    /// The url as written in `inbox.toml`, with `${VAR}` unexpanded. Safe to
-    /// print, unlike `url`, which may carry a token.
-    pub url_template: String,
 impl Config {
     pub fn load(path: &Path) -> Result<Config, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
@@ -720,3 +721,27 @@ mod tests {
             c.sources[0].targets[0].url_template,
             "http://${APP_TOKEN}.local/in"
         );
+    #[test]
+    fn a_target_timeout_must_leave_room_inside_the_lease() {
+        let with = |lease: &str, timeout: &str| {
+            format!(
+                r#"
+                [worker]
+                lease = "{lease}"
+                [[source]]
+                name = "github"
+                verifier = "github"
+                secret_env = "GITHUB_SECRET"
+                [[source.target]]
+                name = "app"
+                url = "http://localhost:3000/hooks/github"
+                timeout = "{timeout}"
+                "#
+            )
+        };
+        assert!(parse(&with("30s", "10s")).is_ok());
+        let e = err(&with("30s", "30s"));
+        assert!(e.contains("\"app\"") && e.contains("worker.lease"), "{e}");
+        assert!(parse(&with("30s", "29500ms")).is_err());
+    }
+
