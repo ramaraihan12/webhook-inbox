@@ -52,15 +52,20 @@ examples/send.sh github        # also: midtrans, xendit, partner, bad
 
 Then open http://127.0.0.1:8020/ui and sign in with any user name and `demo-admin-token` as the password. The compose file uses demo secrets and publishes ports on `127.0.0.1` only. Put real values in `.env` (see `.env.example`).
 
-The `partner` source points at an endpoint that always answers 503, so about a minute after sending one it shows up in the dead-letter view. Retry settings in `inbox.toml` are shortened for that.
+The `partner` source points at an endpoint that always answers 503, so about 10 seconds after sending one it shows up in the dead-letter view. Retry settings in `inbox.toml` are shortened for that.
 
-Or only Postgres in Docker and the service on your machine:
+Or only Postgres in Docker and the service on your machine (this one needs Rust):
 
 ```bash
-cp .env.example .env     # fill in the secrets, openssl rand -hex 32
+docker compose up -d db          # on 127.0.0.1:5432, DB_PORT moves it
+cp .env.example .env             # fill in the secrets, openssl rand -hex 32
+set -a; . ./.env; set +a         # the binary reads the environment, not the file
+cargo run --bin echo-sink &      # demo targets on 127.0.0.1:8021, or point SINK_URL at your app
 cargo run -- serve
 cargo run -- prune --older-than 30d --dry-run
 ```
+
+If you change `DB_PORT`, change the port in `DATABASE_URL` too.
 
 | Variable | Default | |
 | --- | --- | --- |
@@ -68,9 +73,9 @@ cargo run -- prune --older-than 30d --dry-run
 | `INBOX_CONFIG` | `inbox.toml` | path to the config |
 | `ADMIN_TOKEN` | none | protects `/ui`, which answers 503 while it is empty |
 | `<secret_env>` | none | one per source, named in `inbox.toml`, required at start |
-| `RUST_LOG` | `info` | log filter |
+| `RUST_LOG` | `info` | log filter, add `tower_http=debug` for one access line per request |
 
-On a machine without Rust, `scripts/cargo-docker.sh test` runs cargo in the official Rust image with cached volumes.
+On a machine without Rust, `scripts/cargo-docker.sh test` runs cargo in the official Rust image with cached volumes. It passes `TEST_DATABASE_URL` through only if you set it (use `host.docker.internal` for a Postgres on your machine), so the database tests are skipped otherwise.
 
 ## Tests
 
@@ -80,7 +85,7 @@ cargo clippy --all-targets -- -D warnings
 TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/webhook_inbox_test cargo test
 ```
 
-There are 47 unit tests (every verifier with known vectors, tampered bodies, wrong secrets and stale timestamps, plus backoff, config parsing and event ids) and 38 integration tests. The integration tests use a Postgres schema per test and wiremock as the target, and cover forwarding, retry then success, dead after the last try, dedupe, replay, the UI and two worker pools competing for the same jobs. They are skipped without `TEST_DATABASE_URL`. CI runs format, clippy, tests and a release build with a Postgres service.
+There are 51 unit tests (every verifier with known vectors, tampered bodies, wrong secrets and stale timestamps, plus backoff, config parsing and event ids) and 41 integration tests. The integration tests use a Postgres schema per test and wiremock as the target, and cover forwarding, retry then success, dead after the last try, dedupe (including twenty racing requests with one event id), replay, prune, the UI and two worker pools competing for the same jobs. They are skipped without `TEST_DATABASE_URL`. CI runs format, clippy, tests and a release build with a Postgres service.
 
 ## Numbers
 
@@ -88,11 +93,11 @@ One laptop (Ryzen 9 5900HX, 16 GB), Docker Desktop, the compose stack with Postg
 
 | Run | Result |
 | --- | --- |
-| Receive, uncapped | 2339 requests/s, p50 19 ms, p95 38 ms, p99 61 ms, 70176 of 70176 answered 200 |
+| Receive, uncapped | 2339 requests/s, p50 19 ms, p95 38 ms, p99 61 ms, 70176 answered 200 and 50 were cut off at the 30 s mark (70197 stored, so 21 of those got in) |
 | Drain after that run | 49320 queued jobs delivered in 38.8 s, about 1270 deliveries/s |
-| End to end, capped at 800 requests/s for 20 s | 15999 stored and 15999 delivered, queue empty 0.7 s after the last request |
+| End to end, capped at 800 requests/s for 20 s | 15998 answered 200 and 2 were cut off at the deadline, 15999 stored and delivered, queue empty 0.7 s after the last request |
 
-Receiving is faster than delivering, so a burst builds a backlog and the workers catch up afterwards. At 800 requests/s they keep up. These are one run each, not averages. Raw output is in my notes folder, not in the repo.
+Receiving is faster than delivering, so a burst builds a backlog and the workers catch up afterwards. At 800 requests/s they keep up. These are one run each, not averages. The raw `oha` output and run notes are in `docs/bench/`. I measured them at commit `699b6fe`, before the later changes to job claiming, tracing and the latency histogram, and I have not rerun them: the laptop was busy with other builds when I tried, so a new run would not be comparable.
 
 ## What verified means
 
