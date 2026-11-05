@@ -5,7 +5,9 @@
 //! * `POST /down`: always 503 with `Retry-After: 1`.
 //! * `GET /count`: how many POSTs it has seen, as plain text.
 //!
-//! One log line per request unless `SINK_QUIET=1`.
+//! One log line per request unless `SINK_QUIET=1`. `SINK_HOST` sets the bind
+//! address, for running it next to the inbox where only the inbox should be
+//! reachable.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +27,7 @@ struct Sink {
 
 #[tokio::main]
 async fn main() {
+    let host = std::env::var("SINK_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = std::env::var("PORT").unwrap_or_else(|_| "8021".to_string());
     let sink = Sink {
         seen: Arc::new(AtomicU64::new(0)),
@@ -35,10 +38,10 @@ async fn main() {
         .route("/{*path}", post(receive))
         .with_state(sink);
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+    let listener = tokio::net::TcpListener::bind(format!("{host}:{port}"))
         .await
         .expect("port is free");
-    println!("echo-sink listening on :{port}");
+    println!("echo-sink listening on {host}:{port}");
     axum::serve(listener, app).await.expect("server runs");
 }
 
