@@ -1,0 +1,35 @@
+# The public demo on Render. Same build as the Dockerfile in the repo root, but
+# this image has to stand alone: Render mounts nothing, so the config goes in the
+# image, and a free instance is one container, so the demo sink runs in it too.
+FROM rust:1.99-bookworm AS build
+WORKDIR /app
+
+# Dependencies first so code changes don't rebuild them.
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src/bin \
+ && echo 'fn main() {}' > src/main.rs \
+ && echo '' > src/lib.rs \
+ && echo 'fn main() {}' > src/bin/echo-sink.rs \
+ && cargo build --release --locked \
+ && rm -rf src
+
+COPY migrations migrations
+COPY templates templates
+COPY static static
+COPY src src
+RUN touch src/main.rs src/lib.rs src/bin/echo-sink.rs \
+ && cargo build --release --locked
+
+FROM debian:bookworm-slim
+# CA certificates for Neon, psql for cleanup.sql.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates postgresql-client \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --no-create-home --uid 10001 app
+COPY --from=build /app/target/release/webhook-inbox /app/target/release/echo-sink /usr/local/bin/
+# Last, so a config change does not touch the layers above.
+COPY deploy/render/inbox.toml deploy/render/cleanup.sql deploy/render/start.sh /etc/webhook-inbox/
+ENV INBOX_CONFIG=/etc/webhook-inbox/inbox.toml
+USER app
+EXPOSE 8020
+ENTRYPOINT ["sh", "/etc/webhook-inbox/start.sh"]

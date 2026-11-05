@@ -1,0 +1,101 @@
+# Config of the public demo, baked into the image by deploy/render/Dockerfile.
+# The admin token is public and everything here is made up, so this is the
+# compose demo with less room for strangers: small bodies, a rate limit, no
+# caller addresses in what the UI shows, and targets written out in full. The
+# sink runs in the same container on loopback, and nothing here reads a target
+# from the environment or from a request.
+
+[server]
+# Render routes to the port in PORT, which the service sets to 8020 as well.
+listen = "0.0.0.0:8020"
+max_body_bytes = 16384
+request_timeout = "10s"
+landing_page = true
+# What Render's proxy adds about the caller. The UI is public, so none of it may
+# reach the delivery page.
+hide_headers = [
+  "cf-connecting-ip",
+  "cf-connecting-ipv6",
+  "cf-ipcountry",
+  "cf-pseudo-ipv4",
+  "cf-ray",
+  "forwarded",
+  "true-client-ip",
+  "x-forwarded-for",
+  "x-real-ip",
+]
+
+[server.rate_limit]
+per_minute = 20
+# Cloudflare sets this one itself, a value sent by the caller does not survive.
+client_ip_header = "cf-connecting-ip"
+
+# 0.1 CPU, so one loop is plenty.
+[worker]
+count = 1
+batch = 4
+poll_interval = "1s"
+lease = "2m"
+
+# Short on purpose so a visitor sees a dead job in about 10 seconds.
+[retry]
+max_attempts = 5
+base = "1s"
+cap = "20s"
+max_retry_after = "1m"
+
+[rejected]
+keep = 50
+
+[[source]]
+name = "github"
+verifier = "github"
+secret_env = "GITHUB_WEBHOOK_SECRET"
+event_id = { header = "x-github-delivery" }
+
+[[source.target]]
+name = "ci"
+url = "http://127.0.0.1:8021/ok"
+timeout = "5s"
+headers = { x-forwarded-by = "webhook-inbox" }
+
+[[source]]
+name = "midtrans"
+verifier = "midtrans"
+secret_env = "MIDTRANS_SERVER_KEY"
+event_id = { json_pointers = ["/transaction_id", "/transaction_status"] }
+
+# This one fails twice before it works, to show retries.
+[[source.target]]
+name = "billing"
+url = "http://127.0.0.1:8021/flaky"
+timeout = "5s"
+
+[[source.target]]
+name = "audit"
+url = "http://127.0.0.1:8021/ok"
+timeout = "5s"
+
+[[source]]
+name = "xendit"
+verifier = "xendit"
+secret_env = "XENDIT_CALLBACK_TOKEN"
+event_id = { json_pointer = "/id" }
+
+[[source.target]]
+name = "payouts"
+url = "http://127.0.0.1:8021/ok"
+
+# Its target is always down, which is how something reaches the dead letters.
+[[source]]
+name = "partner"
+verifier = "hmac"
+secret_env = "PARTNER_SECRET"
+header = "x-partner-signature"
+tolerance = "5m"
+event_id = { header = "x-partner-event" }
+
+[[source.target]]
+name = "erp"
+url = "http://127.0.0.1:8021/down"
+timeout = "3s"
