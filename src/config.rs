@@ -54,11 +54,21 @@ pub struct ServerConfig {
     pub max_body_bytes: usize,
     pub request_timeout: Duration,
     /// Request headers that are not stored, so they are never shown in the UI
-    /// or forwarded. Lowercase. For the ones a proxy adds about the caller.
+    /// or forwarded. Lowercase, and `x-vercel-*` matches by prefix. For what a
+    /// platform adds about the caller, which is more than it documents.
     pub hide_headers: Vec<String>,
     /// Serve the public page at `/` that says how to sign in. For a demo only.
     pub landing_page: bool,
     pub rate_limit: Option<RateLimitConfig>,
+}
+
+impl ServerConfig {
+    pub fn hides_header(&self, name: &str) -> bool {
+        self.hide_headers.iter().any(|h| match h.strip_suffix('*') {
+            Some(prefix) => name.starts_with(prefix),
+            None => name == h,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +86,10 @@ pub struct WorkerConfig {
     /// Jobs claimed per round trip, and delivered concurrently by one loop.
     pub batch: i64,
     pub poll_interval: Duration,
+    /// Instead of polling, rest until the next job is due or a new one arrives,
+    /// so an empty queue costs no queries at all. `poll_interval` is then only
+    /// the wait after a failed query.
+    pub sleep_when_idle: bool,
     /// How long a claimed job stays locked before another worker may take it,
     /// which is what recovers jobs from a crashed process.
     pub lease: Duration,
@@ -173,6 +187,8 @@ struct RawWorker {
     count: Option<usize>,
     batch: Option<i64>,
     poll_interval: Option<String>,
+    #[serde(default)]
+    sleep_when_idle: bool,
     lease: Option<String>,
 }
 
@@ -304,6 +320,7 @@ impl RawConfig {
                 &w.poll_interval,
                 Duration::from_secs(1),
             )?,
+            sleep_when_idle: w.sleep_when_idle,
             lease: duration("worker.lease", &w.lease, Duration::from_secs(120))?,
         };
         if worker.count == 0 {
@@ -619,6 +636,22 @@ mod tests {
     }
 
     #[test]
+    fn hidden_headers_match_by_name_or_by_prefix() {
+        let text = format!(
+            r#"
+            [server]
+            hide_headers = ["Forwarded", "X-Vercel-*"]
+            {MINIMAL}
+            "#
+        );
+        let server = parse(&text).unwrap().server;
+        assert!(server.hides_header("forwarded"));
+        assert!(server.hides_header("x-vercel-oidc-token"));
+        assert!(!server.hides_header("forwarded-for"));
+        assert!(!server.hides_header("x-hub-signature-256"));
+    }
+
+    #[test]
     fn a_rate_limit_of_zero_or_a_bad_header_is_refused() {
         let with = |per_minute: u32, header: &str| {
             format!(
@@ -635,10 +668,13 @@ mod tests {
     }
 
     #[test]
-    fn the_render_demo_only_forwards_to_its_own_sink() {
-        let text = include_str!("../deploy/render/inbox.toml");
+    fn the_public_demo_only_forwards_to_its_own_sink() {
+        let text = include_str!("../deploy/vercel/inbox.toml");
         let c = Config::from_toml(text, &|_| Some("demo-value".to_string())).unwrap();
         assert!(c.server.rate_limit.is_some());
+        assert!(c.worker.sleep_when_idle, "a poll would keep Neon awake");
+        assert!(c.server.hides_header("x-vercel-oidc-token"));
+        assert!(c.server.hides_header("x-forwarded-for"));
         assert!(!c.sources.is_empty());
         for target in c.sources.iter().flat_map(|s| &s.targets) {
             assert!(

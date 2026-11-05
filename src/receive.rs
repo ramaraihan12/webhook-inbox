@@ -13,11 +13,13 @@ use crate::app::AppState;
 use crate::store::{self, Headers, NewDelivery, Stored};
 
 /// Headers that carry credentials. They are not stored, shown or forwarded.
-const SENSITIVE: [&str; 4] = [
+const SENSITIVE: [&str; 5] = [
     "authorization",
     "cookie",
     "proxy-authorization",
     "x-callback-token",
+    // Vercel adds a live OIDC token to every request it passes to a container.
+    "x-vercel-oidc-token",
 ];
 
 pub fn unix_now() -> i64 {
@@ -63,7 +65,7 @@ pub async fn receive(
     };
 
     let mut stored_headers = header_pairs(&headers);
-    stored_headers.retain(|(name, _)| !st.config.server.hide_headers.contains(name));
+    stored_headers.retain(|(name, _)| !st.config.server.hides_header(name));
 
     if let Err(reason) = source.verifier.verify(&headers, &body, unix_now()) {
         let new = NewDelivery {
@@ -111,7 +113,7 @@ pub async fn receive(
 
     match store::insert_verified(&st.pool, &new, &targets).await {
         Ok(Stored::Created(id)) => {
-            st.wake.notify_waiters();
+            st.wake.notify_one();
             outcome("accepted");
             let mut res = (
                 StatusCode::OK,

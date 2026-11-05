@@ -18,11 +18,168 @@ async fn start(server: &MockServer, db: &TestDb, max_attempts: u32) -> TestApp {
     TestApp::start(&db.pool, &config).await
 }
 
+/// With an hour between polls, only a wake-up or a due time can move a job.
+async fn start_sleeping(server: &MockServer, db: &TestDb, max_attempts: u32) -> TestApp {
+    let config = fast_config(&format!("{}/hook", server.uri()), max_attempts).replace(
+        r#"poll_interval = "20ms""#,
+        "poll_interval = \"1h\"\nsleep_when_idle = true",
+    );
+    TestApp::start(&db.pool, &config).await
+}
+
 async fn attempts(pool: &PgPool) -> Vec<(i32, Option<i32>, String)> {
     sqlx::query_as("select attempt, http_status, outcome from attempts order by attempt")
         .fetch_all(pool)
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn a_sleeping_worker_is_woken_by_a_new_delivery() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let app = start_sleeping(&server, &db, 3).await;
+    let workers = app.spawn_workers();
+    // Long enough for both loops to find nothing and rest with no timer.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    app.post_github(BODY, "gh-1").await;
+    wait_for_count(
+        &db.pool,
+        "select count(*) from jobs where status = 'done'",
+        1,
+        WAIT,
+    )
+    .await;
+    workers.stop().await;
+    db.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_sleeping_worker_wakes_up_for_each_retry() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .up_to_n_times(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let app = start_sleeping(&server, &db, 5).await;
+    let workers = app.spawn_workers();
+
+    app.post_github(BODY, "gh-1").await;
+    wait_for_count(
+        &db.pool,
+        "select count(*) from jobs where status = 'done'",
+        1,
+        WAIT,
+    )
+    .await;
+    workers.stop().await;
+
+    let seen: Vec<_> = attempts(&db.pool).await.into_iter().map(|a| a.1).collect();
+    assert_eq!(seen, [Some(500), Some(500), Some(200)]);
+    db.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_sleeping_worker_leaves_no_delivery_behind_in_a_burst() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let app = start_sleeping(&server, &db, 3).await;
+    let workers = app.spawn_workers();
+
+    // A wake-up that lands while the loops are busy must not get lost, there is
+    // no poll to pick up what it was for.
+    let sends = (0..30).map(|n| {
+        let app = &app;
+        async move { app.post_github(BODY, &format!("gh-{n}")).await }
+    });
+    futures_util::future::join_all(sends).await;
+
+    wait_for_count(
+        &db.pool,
+        "select count(*) from jobs where status = 'done'",
+        30,
+        WAIT,
+    )
+    .await;
+    workers.stop().await;
+    db.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_sleeping_worker_takes_what_was_waiting_when_it_starts() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let app = start_sleeping(&server, &db, 3).await;
+
+    app.post_github(BODY, "gh-1").await;
+    let workers = app.spawn_workers();
+    wait_for_count(
+        &db.pool,
+        "select count(*) from jobs where status = 'done'",
+        1,
+        WAIT,
+    )
+    .await;
+    workers.stop().await;
+    db.cleanup().await;
+}
+
+#[tokio::test]
+async fn the_next_due_time_is_none_on_an_empty_queue_and_counts_down_otherwise() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let server = MockServer::start().await;
+    let app = start_sleeping(&server, &db, 3).await;
+    assert_eq!(queue::next_due_in(&db.pool).await.unwrap(), None);
+
+    app.post_github(BODY, "gh-1").await;
+    assert_eq!(
+        queue::next_due_in(&db.pool).await.unwrap(),
+        Some(Duration::ZERO),
+        "a new job is due right away"
+    );
+
+    sqlx::query("update jobs set next_attempt_at = now() + interval '30 seconds'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let due = queue::next_due_in(&db.pool).await.unwrap().unwrap();
+    assert!(due > Duration::from_secs(25) && due <= Duration::from_secs(30));
+
+    sqlx::query("update jobs set status = 'done'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(queue::next_due_in(&db.pool).await.unwrap(), None);
+    db.cleanup().await;
 }
 
 #[tokio::test]

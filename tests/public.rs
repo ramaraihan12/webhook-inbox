@@ -22,7 +22,7 @@ fn public_config() -> String {
         r#"
         [server]
         landing_page = true
-        hide_headers = ["X-Forwarded-For", "cf-connecting-ip"]
+        hide_headers = ["X-Forwarded-*", "cf-connecting-ip"]
         [server.rate_limit]
         per_minute = 2
         client_ip_header = "cf-connecting-ip"

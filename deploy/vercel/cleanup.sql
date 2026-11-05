@@ -1,5 +1,5 @@
--- Run by start.sh at boot and every 10 minutes. The admin token of this demo is
--- public, so whatever strangers leave here has to expire by itself: their
+-- Run by start.sh once per boot. The admin token of this demo is public, so
+-- whatever strangers leave here has to expire by itself: their
 -- deliveries, and replays of the seeded ones, go after 6 hours. Deliveries
 -- listed in demo_keep are the seeds and stay. That list is filled by hand after
 -- seeding. It is a table and not a marker in the row because anything in a row

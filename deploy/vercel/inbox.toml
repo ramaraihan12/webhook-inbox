@@ -1,4 +1,4 @@
-# Config of the public demo, baked into the image by deploy/render/Dockerfile.
+# Config of the public demo, baked into the image by Dockerfile.vercel.
 # The admin token is public and everything here is made up, so this is the
 # compose demo with less room for strangers: small bodies, a rate limit, no
 # caller addresses in what the UI shows, and targets written out in full. The
@@ -6,35 +6,29 @@
 # from the environment or from a request.
 
 [server]
-# Render routes to the port in PORT, which the service sets to 8020 as well.
+# Vercel routes to the port in PORT, which the project sets to 8020 as well.
 listen = "0.0.0.0:8020"
 max_body_bytes = 16384
 request_timeout = "10s"
 landing_page = true
-# What Render's proxy adds about the caller. The UI is public, so none of it may
-# reach the delivery page.
-hide_headers = [
-  "cf-connecting-ip",
-  "cf-connecting-ipv6",
-  "cf-ipcountry",
-  "cf-pseudo-ipv4",
-  "cf-ray",
-  "forwarded",
-  "true-client-ip",
-  "x-forwarded-for",
-  "x-real-ip",
-]
+# The UI is public, so what Vercel adds must not reach the delivery page: the
+# caller's address, city and coordinates, and signatures and tokens of its own.
+# A prefix because it sends far more of these than it documents.
+hide_headers = ["forwarded", "x-forwarded-*", "x-real-ip", "x-vercel-*"]
 
 [server.rate_limit]
 per_minute = 20
-# Cloudflare sets this one itself, a value sent by the caller does not survive.
-client_ip_header = "cf-connecting-ip"
+# Vercel overwrites this one, a value sent by the caller does not survive. Headers
+# it does not know about do: cf-connecting-ip and true-client-ip come through as sent.
+client_ip_header = "x-vercel-forwarded-for"
 
-# 0.1 CPU, so one loop is plenty.
+# No polling. Neon suspends after 5 quiet minutes, and a query on a timer would
+# stop it, so the worker only looks when a job is due or a request wakes it.
 [worker]
 count = 1
 batch = 4
-poll_interval = "1s"
+sleep_when_idle = true
+poll_interval = "5s"
 lease = "2m"
 
 # Short on purpose so a visitor sees a dead job in about 10 seconds.

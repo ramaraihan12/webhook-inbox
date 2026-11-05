@@ -31,6 +31,10 @@ const NOT_FORWARDED: [&str; 12] = [
     "user-agent",
 ];
 
+/// The shortest rest with `sleep_when_idle`, so a due job that another worker
+/// holds locked for a moment does not turn into a busy loop.
+const MIN_REST: Duration = Duration::from_millis(50);
+
 /// How much of an error response is kept to explain a failure.
 const SNIPPET_BYTES: usize = 300;
 
@@ -97,13 +101,14 @@ impl Worker {
                 Err(e) => {
                     tracing::error!(worker = id, error = %e, "could not claim jobs");
                     drop(permits);
-                    self.idle(&shutdown, cfg.poll_interval).await;
+                    self.idle(&shutdown, Some(cfg.poll_interval)).await;
                     continue;
                 }
             };
             if jobs.is_empty() {
                 drop(permits);
-                self.idle(&shutdown, cfg.poll_interval).await;
+                let rest = self.rest().await;
+                self.idle(&shutdown, rest).await;
                 continue;
             }
             // Not raced against `shutdown`: a claimed job is always finished.
@@ -134,11 +139,33 @@ impl Worker {
         }
     }
 
-    async fn idle(&self, shutdown: &CancellationToken, poll: Duration) {
+    /// How long a loop with nothing to claim rests. `None` means until something
+    /// wakes it, which is what lets the database go to sleep on an empty queue.
+    async fn rest(&self) -> Option<Duration> {
+        let cfg = &self.config.worker;
+        if !cfg.sleep_when_idle {
+            return Some(cfg.poll_interval);
+        }
+        match queue::next_due_in(&self.pool).await {
+            Ok(due) => due.map(|d| d.max(MIN_REST)),
+            Err(e) => {
+                tracing::error!(error = %e, "could not read the next due time");
+                Some(cfg.poll_interval)
+            }
+        }
+    }
+
+    async fn idle(&self, shutdown: &CancellationToken, rest: Option<Duration>) {
+        let timer = async {
+            match rest {
+                Some(d) => tokio::time::sleep(d).await,
+                None => std::future::pending().await,
+            }
+        };
         tokio::select! {
             _ = shutdown.cancelled() => {}
             _ = self.wake.notified() => {}
-            _ = tokio::time::sleep(poll) => {}
+            _ = timer => {}
         }
     }
 
@@ -170,6 +197,11 @@ impl Worker {
                 job = %job.job_id, error = %e,
                 "could not record attempt, the job will be retried when its lease expires"
             ),
+        }
+        // A loop that went to rest while this ran counted on the lease end. The
+        // job may be due much sooner now, so it has to look again.
+        if self.config.worker.sleep_when_idle {
+            self.wake.notify_one();
         }
     }
 

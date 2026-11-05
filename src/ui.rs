@@ -643,7 +643,7 @@ async fn replay_delivery(
             .into_response(),
         Ok(n) => {
             tracing::info!(delivery = %id, jobs = n, "replay requested from the ui");
-            st.wake.notify_waiters();
+            st.wake.notify_one();
             activity_partial(State(st), Path(id)).await
         }
         Err(e) => db_error(e),
@@ -740,7 +740,7 @@ async fn replay_job(
     match queue::replay_delivery(&st.pool, delivery_id, &one).await {
         Ok(_) => {
             tracing::info!(delivery = %delivery_id, target = %target_name, "dead job replayed from the ui");
-            st.wake.notify_waiters();
+            st.wake.notify_one();
             render(&QueuedRow {
                 message: format!(
                     "Queued again for {target_name}. It leaves this list once it is retried."

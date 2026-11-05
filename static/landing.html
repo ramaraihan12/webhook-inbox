@@ -29,6 +29,11 @@
     li { margin-bottom: 6px; }
     a { color: var(--accent); }
     code { font-family: var(--mono); font-size: 0.92em; }
+    pre {
+      margin: 8px 0 12px; padding: 12px; overflow-x: auto;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      font: 13px/1.5 var(--mono);
+    }
     .signin {
       margin: 24px 0; padding: 20px;
       background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
@@ -63,11 +68,21 @@
     <li>POST anything to <code>/in/github</code> without a valid signature. You get a 401, and it shows up in the list as rejected.</li>
   </ul>
 
+  <h2>Send a signed webhook</h2>
+  <p>Paste this into a terminal with <code>curl</code> and <code>openssl</code>, then look for it in the inbox.</p>
+  <pre>body='{"action":"opened","repository":{"full_name":"kabut-labs/billing-api"}}'
+sig=$(printf %s "$body" | openssl dgst -sha256 -hmac demo-github-secret | sed 's/^.* //')
+curl -i https://webhook-inbox-zeta.vercel.app/in/github \
+  -H "x-hub-signature-256: sha256=$sig" \
+  -H "x-github-delivery: try-$RANDOM$RANDOM" \
+  -d "$body"</pre>
+  <p>Change one character of the body after signing and it gets a 401. From a clone of the repo, <code>BASE=https://webhook-inbox-zeta.vercel.app examples/send.sh midtrans</code> sends one that goes through the failing target, and <code>partner</code> sends one that ends up in the dead letters. Both use the same demo secrets, which protect nothing but this page.</p>
+
   <h2>About this demo</h2>
   <ul>
-    <li>Everything here is made up. The password is public, so whatever you send can be read by anyone. Please don't send real data. What visitors add is deleted after about 6 hours.</li>
+    <li>Everything here is made up. The password and signing secrets are public, so whatever you send can be read by anyone. Please don't send real data. What visitors add is deleted after about 6 hours, the next time the app starts.</li>
     <li>Forwarding only goes to a small test target in the same container, and it can't be pointed anywhere else.</li>
-    <li>It runs on a free instance that sleeps after 15 minutes without traffic, so the first visit can take about a minute.</li>
+    <li>It runs in a free container that starts on the first request and stops about 30 seconds after the last one. The retry worker stops with it, so a retry due later than that waits for the next request, which starts the app and picks it up. A normal install keeps running and retries on time.</li>
   </ul>
 
   <p class="source"><a href="https://github.com/ramaraihan12/webhook-inbox">Source on GitHub</a></p>

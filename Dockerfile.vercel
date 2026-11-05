@@ -1,6 +1,6 @@
-# The public demo on Render. Same build as the Dockerfile in the repo root, but
-# this image has to stand alone: Render mounts nothing, so the config goes in the
-# image, and a free instance is one container, so the demo sink runs in it too.
+# The public demo on Vercel's Container Runtime. Same build as the Dockerfile in
+# the repo root, but this image has to stand alone: nothing gets mounted, so the
+# config goes in the image, and the demo sink runs in the same container.
 FROM rust:1.99-bookworm AS build
 WORKDIR /app
 
@@ -28,7 +28,7 @@ RUN apt-get update \
  && useradd --system --no-create-home --uid 10001 app
 COPY --from=build /app/target/release/webhook-inbox /app/target/release/echo-sink /usr/local/bin/
 # Last, so a config change does not touch the layers above.
-COPY deploy/render/inbox.toml deploy/render/cleanup.sql deploy/render/start.sh /etc/webhook-inbox/
+COPY deploy/vercel/inbox.toml deploy/vercel/cleanup.sql deploy/vercel/start.sh /etc/webhook-inbox/
 ENV INBOX_CONFIG=/etc/webhook-inbox/inbox.toml
 USER app
 EXPOSE 8020

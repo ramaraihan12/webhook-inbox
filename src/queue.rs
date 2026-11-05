@@ -165,6 +165,21 @@ pub async fn finish_job(
     Ok(recorded == 1)
 }
 
+/// How long until the next job is due, `None` with nothing waiting or in flight.
+/// Claiming moves `next_attempt_at` to the lease end, so this also covers a job
+/// held by a worker that may die. The wait comes from the database clock, the
+/// same one `claim_jobs` compares with.
+pub async fn next_due_in(pool: &PgPool) -> Result<Option<Duration>, sqlx::Error> {
+    let secs: Option<f64> = sqlx::query_scalar(
+        "select extract(epoch from min(next_attempt_at) - now())::float8
+         from jobs
+         where status in ('pending', 'in_flight')",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(secs.map(|s| Duration::from_secs_f64(s.max(0.0))))
+}
+
 /// Queues a fresh job for every target of a verified delivery. The old jobs
 /// and their attempts stay, so the timeline shows the replay as new tries.
 /// Returns how many jobs were created, 0 if the delivery is unknown or was

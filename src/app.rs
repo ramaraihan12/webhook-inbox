@@ -25,7 +25,8 @@ pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<Config>,
     /// Woken when a delivery is stored, so idle workers do not wait for the
-    /// next poll.
+    /// next poll. Use `notify_one`: it keeps the wake-up for a loop that is busy
+    /// right now, which matters when the loop sleeps with no poll to fall back on.
     pub wake: Arc<Notify>,
     pub metrics: PrometheusHandle,
     /// Token for the UI. With none set the UI answers 503.

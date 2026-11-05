@@ -214,6 +214,33 @@ async fn credential_headers_are_not_stored() {
 }
 
 #[tokio::test]
+async fn the_oidc_token_vercel_adds_is_not_stored() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let app = TestApp::start(&db.pool, CONFIG).await;
+
+    let res = app
+        .client
+        .post(format!("{}/in/github", app.base))
+        .header("x-hub-signature-256", github_signature("gh-secret", BODY))
+        .header("x-github-delivery", "d-oidc")
+        .header("x-vercel-oidc-token", "eyJ.live.token")
+        .body(BODY.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+
+    let (headers,): (String,) = sqlx::query_as("select headers::text from deliveries")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert!(!headers.contains("x-vercel-oidc-token"), "{headers}");
+    db.cleanup().await;
+}
+
+#[tokio::test]
 async fn healthz_and_metrics_respond() {
     let Some(db) = TestDb::new().await else {
         return;
