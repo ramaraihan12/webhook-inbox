@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>webhook-inbox demo</title>
+  <style>
+    :root {
+      --bg: #f6f5f1; --panel: #ffffff; --ink: #1d2126; --muted: #667078;
+      --line: #dcdad2; --accent: #1f5e5b; --on-accent: #ffffff;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #15181b; --panel: #1d2125; --ink: #e4e6e8; --muted: #8f99a1;
+        --line: #2f353a; --accent: #5fb3ad; --on-accent: #10201f;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0 auto; padding: 48px 16px 64px; max-width: 640px;
+      background: var(--bg); color: var(--ink);
+      font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    h2 { margin: 32px 0 8px; font-size: 17px; }
+    p { margin: 0 0 12px; }
+    ul { margin: 0; padding-left: 20px; }
+    li { margin-bottom: 6px; }
+    a { color: var(--accent); }
+    code { font-family: var(--mono); font-size: 0.92em; }
+    .signin {
+      margin: 24px 0; padding: 20px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 16px; }
+    dt { color: var(--muted); }
+    dd { margin: 0; }
+    .open {
+      display: inline-block; padding: 8px 16px; border-radius: 6px;
+      background: var(--accent); color: var(--on-accent); text-decoration: none; font-weight: 600;
+    }
+    .source { margin-top: 32px; }
+  </style>
+</head>
+<body>
+  <h1>webhook-inbox</h1>
+  <p>Receives webhooks from Midtrans, Xendit, GitHub or any HMAC signer, checks the signature, stores every delivery in Postgres and forwards it with retries.</p>
+
+  <div class="signin">
+    <dl>
+      <dt>User name</dt><dd>anything</dd>
+      <dt>Password</dt><dd><code>demo-admin-token</code></dd>
+    </dl>
+    <a class="open" href="/ui">Open the inbox</a>
+  </div>
+
+  <h2>Things to try</h2>
+  <ul>
+    <li>Open a <strong>midtrans</strong> delivery. Its <code>billing</code> target fails twice and works on the third try, and the timeline shows the backoff between tries.</li>
+    <li>Press <strong>Replay to all targets</strong> there and watch the new tries arrive on the same page.</li>
+    <li>Open <strong>Dead letters</strong>. Those deliveries used all 5 tries against a target that is always down.</li>
+    <li>POST anything to <code>/in/github</code> without a valid signature. You get a 401, and it shows up in the list as rejected.</li>
+  </ul>
+
+  <h2>About this demo</h2>
+  <ul>
+    <li>Everything here is made up. The password is public, so whatever you send can be read by anyone. Please don't send real data. What visitors add is deleted after about 6 hours.</li>
+    <li>Forwarding only goes to a small test target in the same container, and it can't be pointed anywhere else.</li>
+    <li>It runs on a free instance that sleeps after 15 minutes without traffic, so the first visit can take about a minute.</li>
+  </ul>
+
+  <p class="source"><a href="https://github.com/ramaraihan12/webhook-inbox">Source on GitHub</a></p>
+</body>
+</html>

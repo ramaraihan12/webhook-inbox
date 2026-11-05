@@ -35,6 +35,7 @@ This Midtrans delivery has two targets. `billing` is a demo endpoint that fails 
 - A verified request has its raw body, headers and result stored, plus one job per target, and the answer goes out before any forwarding. A second delivery with the same event id gets `200` with `x-inbox-duplicate: true` and no new jobs. Credentials such as `authorization` and `x-callback-token` are not stored.
 - Workers claim jobs with `SELECT ... FOR UPDATE SKIP LOCKED` and a lease, so several instances can share one database. Each attempt POSTs the original body with `x-inbox-delivery-id`, `x-inbox-attempt` and `x-inbox-verified` (what the check covered). A 2xx ends the job. Anything else retries with exponential backoff and full jitter (defaults: 8 tries, 2 s base, 1 h cap), `Retry-After` is honoured up to a cap, and after the last try the job is `dead`. A target `timeout` must fit inside `worker.lease` (with a second to spare) or the config does not load, so a slow request is never claimed twice.
 - `/ui` needs `ADMIN_TOKEN`, as a bearer token or as the Basic auth password. Replay creates fresh jobs, it never edits history. The page is server-rendered with askama and a vendored htmx file, no CDN.
+- `[server]` has three settings for running in public, all off by default: `rate_limit` (per caller, on `/in/*` and Replay, with the address read from a header your proxy sets), `hide_headers` (never stored, so never shown or forwarded) and `landing_page` (a page at `/` that says how to sign in).
 - `/healthz`, `/metrics` (Prometheus), and on SIGTERM the server stops accepting and lets in-flight deliveries finish. `prune --older-than 30d` deletes old deliveries but keeps anything still queued.
 
 ## Stack
@@ -85,7 +86,7 @@ cargo clippy --all-targets -- -D warnings
 TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/webhook_inbox_test cargo test
 ```
 
-There are 51 unit tests (every verifier with known vectors, tampered bodies, wrong secrets and stale timestamps, plus backoff, config parsing and event ids) and 41 integration tests. The integration tests use a Postgres schema per test and wiremock as the target, and cover forwarding, retry then success, dead after the last try, dedupe (including twenty racing requests with one event id), replay, prune, the UI and two worker pools competing for the same jobs. They are skipped without `TEST_DATABASE_URL`. CI runs format, clippy, tests and a release build with a Postgres service.
+There are 61 unit tests (every verifier with known vectors, tampered bodies, wrong secrets and stale timestamps, plus backoff, config parsing, event ids and the rate limit) and 49 integration tests. The integration tests use a Postgres schema per test and wiremock as the target, and cover forwarding, retry then success, dead after the last try, dedupe (including twenty racing requests with one event id), replay, prune, the UI, the public demo settings and two worker pools competing for the same jobs. They are skipped without `TEST_DATABASE_URL`. CI runs format, clippy, tests and a release build with a Postgres service.
 
 ## Numbers
 

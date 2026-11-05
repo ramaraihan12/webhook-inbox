@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::inspect::{self, AttemptRow, DeadRow, DeliveryDetail, DeliveryRow, JobRow, ListFilter};
+use crate::limit::{self, Limiter};
 use crate::queue;
 use crate::verify::ct_eq;
 
@@ -24,18 +25,23 @@ const STATUSES: [&str; 4] = ["pending", "done", "dead", "rejected"];
 /// Bodies longer than this are cut in the page. The stored copy is whole.
 const BODY_PREVIEW_BYTES: usize = 64 * 1024;
 
-pub fn routes(state: AppState) -> Router<AppState> {
+pub fn routes(state: AppState, limiter: Limiter) -> Router<AppState> {
+    // The only routes here that write, so the only ones that are limited.
+    let replay = Router::new()
+        .route("/ui/deliveries/{id}/replay", post(replay_delivery))
+        .route("/ui/jobs/{id}/replay", post(replay_job))
+        .route_layer(middleware::from_fn_with_state(limiter, limit::check));
+
     Router::new()
         .route("/ui", get(list_page))
         .route("/ui/rows", get(rows_partial))
         .route("/ui/dead", get(dead_page))
         .route("/ui/deliveries/{id}", get(detail_page))
         .route("/ui/deliveries/{id}/activity", get(activity_partial))
-        .route("/ui/deliveries/{id}/replay", post(replay_delivery))
-        .route("/ui/jobs/{id}/replay", post(replay_job))
         .route("/ui/static/app.css", get(css))
         .route("/ui/static/htmx.min.js", get(htmx))
         .route("/ui/static/app.js", get(app_js))
+        .merge(replay)
         .layer(middleware::from_fn_with_state(state, guard))
 }
 
@@ -746,6 +752,23 @@ async fn replay_job(
 }
 
 // ---- static files ----------------------------------------------------------
+
+/// The public page at `/` when `server.landing_page` is on. It lives outside
+/// `routes` because it has to work without the token.
+pub async fn landing() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; \
+                 form-action 'none'; frame-ancestors 'none'",
+            ),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        include_str!("../static/landing.html"),
+    )
+}
 
 async fn css() -> impl IntoResponse {
     (

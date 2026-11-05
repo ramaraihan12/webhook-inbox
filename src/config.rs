@@ -53,6 +53,20 @@ pub struct ServerConfig {
     pub listen: SocketAddr,
     pub max_body_bytes: usize,
     pub request_timeout: Duration,
+    /// Request headers that are not stored, so they are never shown in the UI
+    /// or forwarded. Lowercase. For the ones a proxy adds about the caller.
+    pub hide_headers: Vec<String>,
+    /// Serve the public page at `/` that says how to sign in. For a demo only.
+    pub landing_page: bool,
+    pub rate_limit: Option<RateLimitConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    pub per_minute: u32,
+    /// Holds the caller's address. It has to be a header the proxy in front
+    /// sets itself, because one a caller can send is one a caller can vary.
+    pub client_ip_header: HeaderName,
 }
 
 #[derive(Debug)]
@@ -139,6 +153,18 @@ struct RawServer {
     listen: Option<String>,
     max_body_bytes: Option<usize>,
     request_timeout: Option<String>,
+    #[serde(default)]
+    hide_headers: Vec<String>,
+    #[serde(default)]
+    landing_page: bool,
+    rate_limit: Option<RawRateLimit>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRateLimit {
+    per_minute: u32,
+    client_ip_header: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -233,6 +259,25 @@ impl RawConfig {
         if max_body_bytes == 0 {
             return invalid("server.max_body_bytes: must be above zero");
         }
+        let rate_limit = match s.rate_limit {
+            None => None,
+            Some(r) => {
+                if r.per_minute == 0 {
+                    return invalid("server.rate_limit.per_minute: must be above zero");
+                }
+                let Ok(client_ip_header) = HeaderName::from_bytes(r.client_ip_header.as_bytes())
+                else {
+                    return invalid(format!(
+                        "server.rate_limit.client_ip_header: {:?} is not a valid header name",
+                        r.client_ip_header
+                    ));
+                };
+                Some(RateLimitConfig {
+                    per_minute: r.per_minute,
+                    client_ip_header,
+                })
+            }
+        };
         let server = ServerConfig {
             listen,
             max_body_bytes,
@@ -241,6 +286,13 @@ impl RawConfig {
                 &s.request_timeout,
                 Duration::from_secs(10),
             )?,
+            hide_headers: s
+                .hide_headers
+                .iter()
+                .map(|h| h.to_ascii_lowercase())
+                .collect(),
+            landing_page: s.landing_page,
+            rate_limit,
         };
 
         let w = self.worker;
@@ -535,6 +587,67 @@ mod tests {
         assert_eq!(s.targets[0].timeout, Duration::from_secs(10));
         assert!(s.event_id.is_none());
         assert!(c.source("nope").is_none());
+    }
+
+    #[test]
+    fn the_public_settings_are_off_by_default() {
+        let c = parse(MINIMAL).unwrap();
+        assert!(c.server.hide_headers.is_empty());
+        assert!(!c.server.landing_page);
+        assert!(c.server.rate_limit.is_none());
+    }
+
+    #[test]
+    fn the_public_settings_parse() {
+        let text = format!(
+            r#"
+            [server]
+            landing_page = true
+            hide_headers = ["X-Forwarded-For"]
+            [server.rate_limit]
+            per_minute = 20
+            client_ip_header = "CF-Connecting-IP"
+            {MINIMAL}
+            "#
+        );
+        let c = parse(&text).unwrap();
+        assert_eq!(c.server.hide_headers, ["x-forwarded-for"]);
+        assert!(c.server.landing_page);
+        let limit = c.server.rate_limit.unwrap();
+        assert_eq!(limit.per_minute, 20);
+        assert_eq!(limit.client_ip_header, "cf-connecting-ip");
+    }
+
+    #[test]
+    fn a_rate_limit_of_zero_or_a_bad_header_is_refused() {
+        let with = |per_minute: u32, header: &str| {
+            format!(
+                r#"
+                [server.rate_limit]
+                per_minute = {per_minute}
+                client_ip_header = "{header}"
+                {MINIMAL}
+                "#
+            )
+        };
+        assert!(err(&with(0, "x-real-ip")).contains("per_minute"));
+        assert!(err(&with(5, "not a header")).contains("client_ip_header"));
+    }
+
+    #[test]
+    fn the_render_demo_only_forwards_to_its_own_sink() {
+        let text = include_str!("../deploy/render/inbox.toml");
+        let c = Config::from_toml(text, &|_| Some("demo-value".to_string())).unwrap();
+        assert!(c.server.rate_limit.is_some());
+        assert!(!c.sources.is_empty());
+        for target in c.sources.iter().flat_map(|s| &s.targets) {
+            assert!(
+                target.url.starts_with("http://127.0.0.1:8021/"),
+                "{} points at {}",
+                target.name,
+                target.url
+            );
+        }
     }
 
     #[test]

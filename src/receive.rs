@@ -62,7 +62,8 @@ pub async fn receive(
             .record(started.elapsed().as_secs_f64());
     };
 
-    let stored_headers = header_pairs(&headers);
+    let mut stored_headers = header_pairs(&headers);
+    stored_headers.retain(|(name, _)| !st.config.server.hide_headers.contains(name));
 
     if let Err(reason) = source.verifier.verify(&headers, &body, unix_now()) {
         let new = NewDelivery {
