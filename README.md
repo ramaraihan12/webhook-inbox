@@ -6,6 +6,8 @@ A small self-hosted service in Rust that receives webhooks from Midtrans, Xendit
 
 I wrote it for the case where a payment callback hits your app while it is down or mid-deploy and the provider gives up after a few tries. Your app can be offline for an hour and the inbox keeps the body and delivers it later. It costs nothing to run: one binary and one Postgres. All demo data below (Kabut Labs, order ids, amounts) is made up.
 
+**Live demo:** https://webhook-inbox-zeta.vercel.app, sign in with any user name and `demo-admin-token`. It runs in a free Vercel container that starts on the first request and stops about 30 seconds after the last one, so the first page takes a few seconds and a retry due later than that waits for the next request. The password and signing secrets are public, so don't send it anything real.
+
 ![The delivery list with filters for source and status, showing made-up GitHub, Midtrans, Xendit and partner deliveries](docs/deliveries.png)
 
 A real run against the compose stack, one good GitHub-style delivery and one with the wrong secret:
@@ -35,7 +37,8 @@ This Midtrans delivery has two targets. `billing` is a demo endpoint that fails 
 - A verified request has its raw body, headers and result stored, plus one job per target, and the answer goes out before any forwarding. A second delivery with the same event id gets `200` with `x-inbox-duplicate: true` and no new jobs. Credentials such as `authorization` and `x-callback-token` are not stored.
 - Workers claim jobs with `SELECT ... FOR UPDATE SKIP LOCKED` and a lease, so several instances can share one database. Each attempt POSTs the original body with `x-inbox-delivery-id`, `x-inbox-attempt` and `x-inbox-verified` (what the check covered). A 2xx ends the job. Anything else retries with exponential backoff and full jitter (defaults: 8 tries, 2 s base, 1 h cap), `Retry-After` is honoured up to a cap, and after the last try the job is `dead`. A target `timeout` must fit inside `worker.lease` (with a second to spare) or the config does not load, so a slow request is never claimed twice.
 - `/ui` needs `ADMIN_TOKEN`, as a bearer token or as the Basic auth password. Replay creates fresh jobs, it never edits history. The page is server-rendered with askama and a vendored htmx file, no CDN.
-- `[server]` has three settings for running in public, all off by default: `rate_limit` (per caller, on `/in/*` and Replay, with the address read from a header your proxy sets), `hide_headers` (never stored, so never shown or forwarded) and `landing_page` (a page at `/` that says how to sign in).
+- `[server]` has three settings for running in public, all off by default: `rate_limit` (per caller, on `/in/*` and Replay, with the address read from a header your proxy sets), `hide_headers` (never stored, so never shown or forwarded, and `x-vercel-*` matches by prefix) and `landing_page` (a page at `/` that says how to sign in).
+- `worker.sleep_when_idle` replaces polling: a worker rests until the next job is due or a new delivery wakes it, so an empty queue runs no queries and a database that suspends when idle can do so.
 - `/healthz`, `/metrics` (Prometheus), and on SIGTERM the server stops accepting and lets in-flight deliveries finish. `prune --older-than 30d` deletes old deliveries but keeps anything still queued.
 
 ## Stack
@@ -86,7 +89,7 @@ cargo clippy --all-targets -- -D warnings
 TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/webhook_inbox_test cargo test
 ```
 
-There are 61 unit tests (every verifier with known vectors, tampered bodies, wrong secrets and stale timestamps, plus backoff, config parsing, event ids and the rate limit) and 49 integration tests. The integration tests use a Postgres schema per test and wiremock as the target, and cover forwarding, retry then success, dead after the last try, dedupe (including twenty racing requests with one event id), replay, prune, the UI, the public demo settings and two worker pools competing for the same jobs. They are skipped without `TEST_DATABASE_URL`. CI runs format, clippy, tests and a release build with a Postgres service.
+There are 62 unit tests (every verifier with known vectors, tampered bodies, wrong secrets and stale timestamps, plus backoff, config parsing, event ids and the rate limit) and 55 integration tests. The integration tests use a Postgres schema per test and wiremock as the target, and cover forwarding, retry then success, dead after the last try, dedupe (including twenty racing requests with one event id), replay, prune, the UI, the public demo settings and two worker pools competing for the same jobs. They are skipped without `TEST_DATABASE_URL`. CI runs format, clippy, tests and a release build with a Postgres service.
 
 ## Numbers
 
@@ -125,6 +128,7 @@ I wrote those two calls from the providers' docs and have not run them against l
 - Admin auth is one shared token with no user accounts or roles. Put it behind TLS and do not expose it on the open internet.
 - Bodies are stored as received, up to `max_body_bytes` (1 MB in the demo config). The UI shows them to anyone with the token, so personal data in a payload is visible there.
 - Delivery is at least once. If a target answers 2xx and the inbox dies before it records that, the job is sent again, so your handler should be idempotent. The `x-inbox-delivery-id` header is there for that.
+- The live demo is `Dockerfile.vercel` and `deploy/vercel/`. Everything a platform adds to a request lands in the stored headers unless `hide_headers` drops it: Vercel adds the caller's address and city and a live OIDC token. Vercel also stops the container about 30 seconds after the last request, not the 5 minutes its docs give for production, so nothing here runs between visits.
 - Next: a per-target rate limit, and a signed header on forwarded requests.
 
 ## License
